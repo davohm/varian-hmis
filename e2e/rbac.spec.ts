@@ -75,11 +75,26 @@ for (const role of ROLES) {
       await expect(nav.getByRole("link", { name: other.navLabel })).toHaveCount(0);
     }
 
-    const response = await page.request.get("/api/admin/staff");
-    if (role.slug === "admin") {
-      expect(response.status()).toBe(200);
-    } else {
-      expect(response.status()).toBe(403);
+    const guardedEndpoints = [
+      { method: "GET" as const, path: "/api/admin/staff", adminStatus: 200 },
+      { method: "GET" as const, path: "/api/admin/overview", adminStatus: 200 },
+      { method: "GET" as const, path: "/api/admin/audit?limit=5", adminStatus: 200 },
+      // An unknown command still returns 400 for an admin: the guard passed and
+      // the command allow-list rejected it.
+      { method: "POST" as const, path: "/api/admin/commands", adminStatus: 400 },
+    ];
+
+    for (const endpoint of guardedEndpoints) {
+      const response = await page.request.fetch(endpoint.path, {
+        method: endpoint.method,
+        data: endpoint.method === "POST" ? { command: "unknown" } : undefined,
+      });
+      expect(response.status(), `${endpoint.method} ${endpoint.path}`).toBe(
+        role.slug === "admin" ? endpoint.adminStatus : 403,
+      );
+    }
+
+    if (role.slug !== "admin") {
       await page.goto("/admin");
       await expect(page.getByTestId("screen-forbidden")).toBeVisible();
     }

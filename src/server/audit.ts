@@ -48,16 +48,49 @@ export async function recordAudit(db: DbExecutor, entry: AuditEntry): Promise<st
   return id;
 }
 
+export interface AuditFilters {
+  userId?: string;
+  action?: string;
+  module?: string;
+  entity?: string;
+  entityId?: string;
+  from?: string;
+  to?: string;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 export async function listAudit(
   db: DbExecutor,
   facilityId: string,
-  limit = 50,
+  limitOrFilters: number | AuditFilters = 50,
+  extraFilters: AuditFilters = {},
 ): Promise<Array<Record<string, unknown>>> {
+  const filters = typeof limitOrFilters === "number" ? extraFilters : limitOrFilters;
+  const limit = typeof limitOrFilters === "number" ? limitOrFilters : 50;
+  const conditions: SQL[] = [sql`facility_id = ${facilityId}::uuid`];
+
+  if (filters.userId) conditions.push(sql`user_id = ${filters.userId}`);
+  if (filters.entityId) conditions.push(sql`entity_id = ${filters.entityId}`);
+  if (filters.action) {
+    conditions.push(sql`action ILIKE ${`%${escapeLike(filters.action)}%`} ESCAPE '\\'`);
+  }
+  if (filters.module) {
+    conditions.push(sql`module ILIKE ${`%${escapeLike(filters.module)}%`} ESCAPE '\\'`);
+  }
+  if (filters.entity) {
+    conditions.push(sql`entity ILIKE ${`%${escapeLike(filters.entity)}%`} ESCAPE '\\'`);
+  }
+  if (filters.from) conditions.push(sql`created_at >= ${filters.from}::timestamptz`);
+  if (filters.to) conditions.push(sql`created_at <= ${filters.to}::timestamptz`);
+
   const result = await db.execute(sql`
     SELECT * FROM audit_log
-    WHERE facility_id = ${facilityId}::uuid
+    WHERE ${sql.join(conditions, sql` AND `)}
     ORDER BY created_at DESC
-    LIMIT ${limit}
+    LIMIT ${Math.min(Math.max(Math.trunc(limit), 1), 200)}
   `);
   return rowsFrom(result);
 }

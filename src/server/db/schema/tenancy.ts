@@ -46,6 +46,7 @@ export const facilities = pgTable(
     email: varchar("email", { length: 255 }),
     writeAuthority: writeAuthorityEnum("write_authority").notNull().default("cloud"),
     timezone: varchar("timezone", { length: 64 }).notNull().default("Africa/Nairobi"),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({
@@ -63,6 +64,7 @@ export const branches = pgTable(
     code: varchar("code", { length: 32 }).notNull(),
     name: text("name").notNull(),
     isMain: boolean("is_main").notNull().default(false),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({
@@ -83,6 +85,7 @@ export const departments = pgTable(
       .references(() => branches.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: departmentKindEnum("kind").notNull(),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({
@@ -106,6 +109,7 @@ export const rooms = pgTable(
       .notNull()
       .references(() => departments.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({
@@ -126,6 +130,7 @@ export const stores = pgTable(
       .references(() => branches.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
     kind: storeKindEnum("kind").notNull(),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({

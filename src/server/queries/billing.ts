@@ -267,7 +267,9 @@ async function loadPayments(
     .from(payments)
     .leftJoin(user, eq(user.id, payments.receivedBy))
     .where(and(eq(payments.facilityId, facilityId), inArray(payments.invoiceId, invoiceIds)))
-    .orderBy(asc(payments.createdAt));
+    // Split-tender payments can share a created_at inside one transaction, so
+    // the receipt sequence is the stable tie-breaker for the bill view.
+    .orderBy(asc(payments.createdAt), asc(payments.receiptNo));
 
   const receiptByPaymentId = new Map(rows.map((row) => [row.id, row.receiptNo]));
   return rows.map((row) => ({

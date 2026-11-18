@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import { newId } from "../src/lib/uuid";
 import { DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
 import {
+  account,
   auditLog,
   branches,
   cashierSessions,
@@ -34,9 +35,13 @@ import {
   queueEntries,
   rooms,
   services,
+  session,
   stockLedger,
+  staffProfiles,
+  staffRoleScopes,
   stores,
   triageVitals,
+  user,
 } from "../src/server/db/schema";
 
 export function createTestDatabase() {
@@ -73,10 +78,56 @@ export async function insertTestBranch(db: TestDatabase["db"], facilityId: strin
   return id;
 }
 
+export async function insertTestActor(db: TestDatabase["db"]) {
+  const id = newId();
+  const suffix = randomUUID().slice(0, 8);
+  const now = new Date();
+  await db.insert(user).values({
+    id,
+    name: `Test Admin ${suffix}`,
+    email: `admin-${suffix}@test.local`,
+    emailVerified: true,
+    role: "admin",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(staffProfiles).values({
+    id: newId(),
+    userId: id,
+    staffNumber: `ADM-${suffix}`.toUpperCase(),
+    createdAt: now,
+    updatedAt: now,
+  });
+  return id;
+}
+
+export async function deleteTestActor(db: TestDatabase["db"], userId: string) {
+  await db.transaction(async (tx) => {
+    await tx.delete(staffRoleScopes).where(eq(staffRoleScopes.userId, userId));
+    await tx.delete(session).where(eq(session.userId, userId));
+    await tx.delete(account).where(eq(account.userId, userId));
+    await tx.delete(staffProfiles).where(eq(staffProfiles.userId, userId));
+    await tx.delete(user).where(eq(user.id, userId));
+  });
+}
+
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
   await db.transaction(async (tx) => {
     // The stock and payment ledgers reject deletes outside test cleanup.
     await tx.execute(sql`SET LOCAL varian.ledger_cleanup = 'on'`);
+
+    const scopedUsers = await tx
+      .select({ userId: staffRoleScopes.userId })
+      .from(staffRoleScopes)
+      .where(eq(staffRoleScopes.facilityId, facilityId));
+    const userIds = scopedUsers.map((row) => row.userId);
+    await tx.delete(staffRoleScopes).where(eq(staffRoleScopes.facilityId, facilityId));
+    if (userIds.length) {
+      await tx.delete(session).where(inArray(session.userId, userIds));
+      await tx.delete(account).where(inArray(account.userId, userIds));
+      await tx.delete(staffProfiles).where(inArray(staffProfiles.userId, userIds));
+      await tx.delete(user).where(inArray(user.id, userIds));
+    }
     // Reversals reference the payment they reverse, so clear them first.
     await tx
       .delete(payments)

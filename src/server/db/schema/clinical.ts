@@ -148,6 +148,7 @@ export const labTests = pgTable(
     name: text("name").notNull(),
     sampleType: text("sample_type").notNull(),
     parameters: jsonb("parameters").$type<LabParameter[]>().notNull().default([]),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({
@@ -246,6 +247,7 @@ export const items = pgTable(
     unit: text("unit").notNull().default("unit"),
     strength: text("strength"),
     form: text("form"),
+    active: boolean("active").notNull().default(true),
     ...auditColumns,
   },
   (table) => ({

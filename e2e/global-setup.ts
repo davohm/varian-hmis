@@ -75,7 +75,9 @@ const API_ROUTES: Array<[method: "GET" | "POST", path: string]> = [
   ["POST", "/api/cashier/sessions/close"],
   ["GET", "/api/cashier/sessions/report?sessionId=00000000-0000-0000-0000-000000000000"],
   ["GET", "/api/admin/staff"],
-  ["GET", "/api/admin/audit"],
+  ["GET", "/api/admin/overview"],
+  ["GET", "/api/admin/audit?limit=5"],
+  ["POST", "/api/admin/commands"],
 ];
 
 /**

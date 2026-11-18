@@ -1,18 +1,39 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { apiErrorResponse } from "@/server/auth/api-error";
-import { getSessionContext, requireApiStaff } from "@/server/auth/guards";
 import { listAudit } from "@/server/audit";
 import { db } from "@/server/db/client";
 
-export async function GET() {
-  try {
-    const context = await getSessionContext();
-    const facilityId = context?.activeFacilityId ?? null;
-    await requireApiStaff(["admin"], facilityId, context?.activeBranchId ?? null);
-    if (!facilityId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+import { requireAdmin } from "../_shared";
 
-    const events = await listAudit(db, facilityId, 100);
+export const dynamic = "force-dynamic";
+
+const auditQuerySchema = z.object({
+  userId: z.string().trim().max(128).optional(),
+  action: z.string().trim().max(128).optional(),
+  module: z.string().trim().max(64).optional(),
+  entity: z.string().trim().max(64).optional(),
+  entityId: z.string().trim().max(128).optional(),
+  from: z.string().trim().max(40).optional(),
+  to: z.string().trim().max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
+export async function GET(request: NextRequest) {
+  try {
+    const { facilityId } = await requireAdmin();
+    const params = Object.fromEntries(request.nextUrl.searchParams.entries());
+    const parsed = auditQuerySchema.safeParse(params);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid audit filter", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+
+    const { limit, ...filters } = parsed.data;
+    const events = await listAudit(db, facilityId, limit, filters);
     return NextResponse.json({ events });
   } catch (error) {
     return apiErrorResponse(error);
