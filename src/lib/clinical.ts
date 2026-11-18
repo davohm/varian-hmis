@@ -58,11 +58,12 @@ export const LAB_ORDER_STATUSES = [
 ] as const;
 export type LabOrderStatus = (typeof LAB_ORDER_STATUSES)[number];
 
-/** Orders in these states still need laboratory work before a visit can close. */
+/** Orders in these states still need laboratory work or verification before a visit can close. */
 export const ACTIVE_LAB_ORDER_STATUSES: readonly LabOrderStatus[] = [
   "ordered",
   "collected",
   "in_progress",
+  "resulted",
 ];
 
 /** A lab order can be cancelled until a result has been returned. */

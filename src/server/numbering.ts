@@ -4,13 +4,14 @@ export type DbExecutor = {
   execute: (query: SQL) => Promise<unknown>;
 };
 
-export type NumberScope = "mrn" | "encounter" | "invoice" | "receipt";
+export type NumberScope = "mrn" | "encounter" | "invoice" | "receipt" | "sample";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   mrn: { infix: "", width: 5 },
   encounter: { infix: "E", width: 6 },
   invoice: { infix: "I", width: 6 },
   receipt: { infix: "R", width: 6 },
+  sample: { infix: "S", width: 6 },
 };
 
 function readValue(result: unknown): number {

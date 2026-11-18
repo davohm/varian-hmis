@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import { db } from "@/server/db/client";
 import {
@@ -365,7 +365,12 @@ export async function getEncounterClinicalDetail(
         .select()
         .from(labResults)
         .where(
-          and(eq(labResults.facilityId, facilityId), inArray(labResults.labOrderItemId, itemIds)),
+          and(
+            eq(labResults.facilityId, facilityId),
+            inArray(labResults.labOrderItemId, itemIds),
+            // The doctor only sees results once the laboratory has verified them.
+            isNotNull(labResults.verifiedAt),
+          ),
         )
         .orderBy(asc(labResults.createdAt))
     : [];

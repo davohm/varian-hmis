@@ -91,9 +91,13 @@ test("failed sign-in is written to the audit log", async ({ page }) => {
   await expect(page).toHaveURL(/\/admin$/);
 
   const failed = await page.request.post("/api/auth/sign-in/email", {
+    // The request shares the browser context's session cookie, so better-auth
+    // enforces its CSRF origin check; without this header it returns
+    // MISSING_OR_NULL_ORIGIN and never reaches the sign-in audit.
+    headers: { origin: "http://127.0.0.1:3000" },
     data: { email: "admin@fam.test", password: "wrong-password-long" },
   });
-  expect(failed.status()).toBeGreaterThanOrEqual(400);
+  expect(failed.status()).toBe(401);
 
   const auditResponse = await page.request.get("/api/admin/audit");
   expect(auditResponse.status()).toBe(200);

@@ -143,7 +143,7 @@ const PRESCRIPTION_STATUS_STYLES: Record<string, string> = {
   cancelled: "border-border bg-muted text-muted-foreground",
 };
 
-const ACTIVE_LAB_STATUSES = new Set(["ordered", "collected", "in_progress"]);
+const ACTIVE_LAB_STATUSES = new Set(["ordered", "collected", "in_progress", "resulted"]);
 
 const TEXTAREA_CLASS =
   "w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-60 dark:bg-input/30";
@@ -442,6 +442,10 @@ export function DoctorWorkspace() {
     source.addEventListener("diagnosis_voided", onClinical);
     source.addEventListener("lab_order_created", onClinical);
     source.addEventListener("lab_order_cancelled", onClinical);
+    source.addEventListener("lab_sample_collected", onClinical);
+    source.addEventListener("lab_processing_started", onClinical);
+    source.addEventListener("lab_results_entered", onClinical);
+    source.addEventListener("lab_results_verified", onClinical);
     source.addEventListener("prescription_created", onClinical);
     source.addEventListener("prescription_cancelled", onClinical);
     return () => {
@@ -455,6 +459,10 @@ export function DoctorWorkspace() {
       source.removeEventListener("diagnosis_voided", onClinical);
       source.removeEventListener("lab_order_created", onClinical);
       source.removeEventListener("lab_order_cancelled", onClinical);
+      source.removeEventListener("lab_sample_collected", onClinical);
+      source.removeEventListener("lab_processing_started", onClinical);
+      source.removeEventListener("lab_results_entered", onClinical);
+      source.removeEventListener("lab_results_verified", onClinical);
       source.removeEventListener("prescription_created", onClinical);
       source.removeEventListener("prescription_cancelled", onClinical);
       source.close();
