@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { newId } from "../src/lib/uuid";
 import { DATABASE_URL } from "../src/server/env";
@@ -12,8 +12,10 @@ import {
   commandLog,
   departments,
   diagnoses,
+  dispenses,
   encounters,
   facilities,
+  itemBatches,
   items,
   labOrderItems,
   labOrders,
@@ -25,6 +27,7 @@ import {
   prescriptions,
   queueEntries,
   rooms,
+  stockLedger,
   stores,
   triageVitals,
 } from "../src/server/db/schema";
@@ -64,25 +67,32 @@ export async function insertTestBranch(db: TestDatabase["db"], facilityId: strin
 }
 
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
-  await db.delete(labResults).where(eq(labResults.facilityId, facilityId));
-  await db.delete(labOrderItems).where(eq(labOrderItems.facilityId, facilityId));
-  await db.delete(labOrders).where(eq(labOrders.facilityId, facilityId));
-  await db.delete(prescriptions).where(eq(prescriptions.facilityId, facilityId));
-  await db.delete(diagnoses).where(eq(diagnoses.facilityId, facilityId));
-  await db.delete(clinicalNotes).where(eq(clinicalNotes.facilityId, facilityId));
-  await db.delete(items).where(eq(items.facilityId, facilityId));
-  await db.delete(labTests).where(eq(labTests.facilityId, facilityId));
-  await db.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
-  await db.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
-  await db.delete(encounters).where(eq(encounters.facilityId, facilityId));
-  await db.delete(nextOfKin).where(eq(nextOfKin.facilityId, facilityId));
-  await db.delete(patients).where(eq(patients.facilityId, facilityId));
-  await db.delete(auditLog).where(eq(auditLog.facilityId, facilityId));
-  await db.delete(commandLog).where(eq(commandLog.facilityId, facilityId));
-  await db.delete(numberSequences).where(eq(numberSequences.facilityId, facilityId));
-  await db.delete(stores).where(eq(stores.facilityId, facilityId));
-  await db.delete(rooms).where(eq(rooms.facilityId, facilityId));
-  await db.delete(departments).where(eq(departments.facilityId, facilityId));
-  await db.delete(branches).where(eq(branches.facilityId, facilityId));
-  await db.delete(facilities).where(eq(facilities.id, facilityId));
+  await db.transaction(async (tx) => {
+    // The stock ledger trigger rejects deletes outside test cleanup.
+    await tx.execute(sql`SET LOCAL varian.ledger_cleanup = 'on'`);
+    await tx.delete(dispenses).where(eq(dispenses.facilityId, facilityId));
+    await tx.delete(stockLedger).where(eq(stockLedger.facilityId, facilityId));
+    await tx.delete(itemBatches).where(eq(itemBatches.facilityId, facilityId));
+    await tx.delete(labResults).where(eq(labResults.facilityId, facilityId));
+    await tx.delete(labOrderItems).where(eq(labOrderItems.facilityId, facilityId));
+    await tx.delete(labOrders).where(eq(labOrders.facilityId, facilityId));
+    await tx.delete(prescriptions).where(eq(prescriptions.facilityId, facilityId));
+    await tx.delete(diagnoses).where(eq(diagnoses.facilityId, facilityId));
+    await tx.delete(clinicalNotes).where(eq(clinicalNotes.facilityId, facilityId));
+    await tx.delete(items).where(eq(items.facilityId, facilityId));
+    await tx.delete(labTests).where(eq(labTests.facilityId, facilityId));
+    await tx.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
+    await tx.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
+    await tx.delete(encounters).where(eq(encounters.facilityId, facilityId));
+    await tx.delete(nextOfKin).where(eq(nextOfKin.facilityId, facilityId));
+    await tx.delete(patients).where(eq(patients.facilityId, facilityId));
+    await tx.delete(auditLog).where(eq(auditLog.facilityId, facilityId));
+    await tx.delete(commandLog).where(eq(commandLog.facilityId, facilityId));
+    await tx.delete(numberSequences).where(eq(numberSequences.facilityId, facilityId));
+    await tx.delete(stores).where(eq(stores.facilityId, facilityId));
+    await tx.delete(rooms).where(eq(rooms.facilityId, facilityId));
+    await tx.delete(departments).where(eq(departments.facilityId, facilityId));
+    await tx.delete(branches).where(eq(branches.facilityId, facilityId));
+    await tx.delete(facilities).where(eq(facilities.id, facilityId));
+  });
 }

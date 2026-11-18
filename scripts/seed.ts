@@ -1,5 +1,5 @@
 import { hashPassword } from "better-auth/crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,10 +12,12 @@ import {
   branches,
   facilities,
   icd10Codes,
+  itemBatches,
   items,
   labTests,
   staffProfiles,
   staffRoleScopes,
+  stockLedger,
   stores,
   user,
   type LabParameter,
@@ -339,6 +341,96 @@ async function upsertDrugs(db: ReturnType<typeof createDatabase>["db"]) {
   return { total: DRUG_SEEDS.length, inserted: missing.length };
 }
 
+function addDaysIso(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function seedQuantity(unit: string): number {
+  if (unit === "tablet" || unit === "capsule") return 600;
+  if (unit === "bottle" || unit === "tube" || unit === "inhaler") return 60;
+  if (unit === "bag" || unit === "sachet") return 120;
+  return 100;
+}
+
+/**
+ * Give every seeded medicine one live batch in the pharmacy store so the
+ * dispense queue has stock on a fresh install. Re-running the seed tops the
+ * same batch up only once (a ledger row with note `seed` marks it).
+ */
+async function upsertPharmacyStock(
+  db: ReturnType<typeof createDatabase>["db"],
+  facilityId: string,
+) {
+  const storeRows = await db
+    .select({ id: stores.id })
+    .from(stores)
+    .where(and(eq(stores.facilityId, facilityId), eq(stores.kind, "pharmacy")))
+    .limit(1);
+  const store = storeRows[0];
+  if (!store) return { storeId: null, batches: 0, received: 0 };
+
+  const itemRows = await db
+    .select({ id: items.id, unit: items.unit })
+    .from(items)
+    .where(inArray(items.code, DRUG_SEEDS.map((drug) => drug.code)));
+
+  let batches = 0;
+  let received = 0;
+  for (const item of itemRows) {
+    const [batch] = await db
+      .insert(itemBatches)
+      .values({
+        id: newId(),
+        facilityId,
+        itemId: item.id,
+        batchNo: "SEED-2026-A",
+        expiryDate: addDaysIso(365),
+        unitCost: "2.50",
+        createdBy: "seed",
+      })
+      .onConflictDoUpdate({
+        target: [itemBatches.facilityId, itemBatches.itemId, itemBatches.batchNo],
+        set: { expiryDate: sql`excluded.expiry_date`, updatedAt: new Date() },
+      })
+      .returning({ id: itemBatches.id });
+    batches += 1;
+
+    const existing = await db
+      .select({ id: stockLedger.id })
+      .from(stockLedger)
+      .where(
+        and(
+          eq(stockLedger.facilityId, facilityId),
+          eq(stockLedger.storeId, store.id),
+          eq(stockLedger.batchId, batch.id),
+          eq(stockLedger.reason, "receive"),
+          eq(stockLedger.note, "seed"),
+        ),
+      )
+      .limit(1);
+    if (existing[0]) continue;
+
+    await db.insert(stockLedger).values({
+      id: newId(),
+      facilityId,
+      storeId: store.id,
+      itemId: item.id,
+      batchId: batch.id,
+      qtyDelta: seedQuantity(item.unit),
+      reason: "receive",
+      refType: "seed",
+      note: "seed",
+      createdBy: "seed",
+    });
+    received += 1;
+  }
+
+  return { storeId: store.id, batches, received };
+}
+
 
 async function upsertFacility(db: ReturnType<typeof createDatabase>["db"]) {
   const existing = await db
@@ -509,6 +601,7 @@ async function seed() {
     }
 
     const allStores = await db.select().from(stores).where(eq(stores.facilityId, facility.id));
+    const pharmacyStock = await upsertPharmacyStock(db, facility.id);
 
     console.log(
       JSON.stringify(
@@ -518,6 +611,7 @@ async function seed() {
           stores: allStores.map(({ id, name, kind }) => ({ id, name, kind })),
           staff: { count: staff.count, password: staff.password },
           catalog: { icd10, labTests: labCatalog, drugs: drugCatalog },
+          pharmacyStock,
         },
         null,
         2,

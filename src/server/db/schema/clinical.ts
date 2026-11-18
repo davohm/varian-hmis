@@ -1,10 +1,14 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  date,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
+  pgView,
   text,
   timestamp,
   uniqueIndex,
@@ -15,7 +19,7 @@ import {
 import { newId } from "../../../lib/uuid";
 
 import { encounters } from "./patients";
-import { auditColumns, facilities } from "./tenancy";
+import { auditColumns, facilities, stores } from "./tenancy";
 
 export const labOrderStatusEnum = pgEnum("lab_order_status", [
   "ordered",
@@ -43,6 +47,16 @@ export const prescriptionStatusEnum = pgEnum("prescription_status", [
   "partial",
   "dispensed",
   "cancelled",
+]);
+
+/** Every stock movement carries one of these reasons; the ledger is append-only. */
+export const stockReasonEnum = pgEnum("stock_reason", [
+  "receive",
+  "dispense",
+  "adjust",
+  "transfer_in",
+  "transfer_out",
+  "reversal",
 ]);
 
 /** A lab parameter definition carried inside `lab_tests.parameters`. */
@@ -276,6 +290,144 @@ export const prescriptions = pgTable(
     ),
   }),
 );
+
+export const itemBatches = pgTable(
+  "item_batches",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "restrict" }),
+    batchNo: varchar("batch_no", { length: 64 }).notNull(),
+    // A null expiry means the item does not expire (consumables, reagents).
+    expiryDate: date("expiry_date", { mode: "string" }),
+    unitCost: numeric("unit_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityItemBatchIdx: uniqueIndex("item_batches_facility_item_batch_idx").on(
+      table.facilityId,
+      table.itemId,
+      table.batchNo,
+    ),
+    facilityItemExpiryIdx: index("item_batches_facility_item_expiry_idx").on(
+      table.facilityId,
+      table.itemId,
+      table.expiryDate,
+    ),
+  }),
+);
+
+/**
+ * Append-only stock ledger. Balances are never stored on a row: they are the
+ * sum of every movement, exposed through the `stock_balances` view. A database
+ * trigger rejects updates (see migration 0005) so history cannot be rewritten.
+ */
+export const stockLedger = pgTable(
+  "stock_ledger",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "restrict" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "restrict" }),
+    batchId: uuid("batch_id").references(() => itemBatches.id, { onDelete: "restrict" }),
+    qtyDelta: integer("qty_delta").notNull(),
+    reason: stockReasonEnum("reason").notNull(),
+    refType: varchar("ref_type", { length: 32 }),
+    refId: text("ref_id"),
+    note: text("note"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    facilityStoreItemIdx: index("stock_ledger_facility_store_item_idx").on(
+      table.facilityId,
+      table.storeId,
+      table.itemId,
+    ),
+    facilityBatchIdx: index("stock_ledger_facility_batch_idx").on(table.facilityId, table.batchId),
+    facilityRefIdx: index("stock_ledger_facility_ref_idx").on(
+      table.facilityId,
+      table.refType,
+      table.refId,
+    ),
+  }),
+);
+
+/**
+ * One allocation row per batch used to fill a prescription. A prescription may
+ * be dispensed over several visits (partial), and a dispense can be reversed;
+ * reversed rows are kept and excluded from the dispensed total.
+ */
+export const dispenses = pgTable(
+  "dispenses",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    prescriptionId: uuid("prescription_id")
+      .notNull()
+      .references(() => prescriptions.id, { onDelete: "restrict" }),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => itemBatches.id, { onDelete: "restrict" }),
+    storeId: uuid("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "restrict" }),
+    quantity: integer("quantity").notNull(),
+    dispensedBy: text("dispensed_by").notNull(),
+    note: text("note"),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    reversedBy: text("reversed_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    facilityPrescriptionIdx: index("dispenses_facility_prescription_idx").on(
+      table.facilityId,
+      table.prescriptionId,
+    ),
+    facilityBatchIdx: index("dispenses_facility_batch_idx").on(table.facilityId, table.batchId),
+  }),
+);
+
+/**
+ * Live balance per store, item and batch. Never written directly; every row is
+ * the sum of the append-only ledger.
+ */
+export const stockBalances = pgView("stock_balances").as((qb) =>
+  qb
+    .select({
+      facilityId: stockLedger.facilityId,
+      storeId: stockLedger.storeId,
+      itemId: stockLedger.itemId,
+      batchId: stockLedger.batchId,
+      quantity: sql<number>`coalesce(sum(${stockLedger.qtyDelta}), 0)::int`.as("quantity"),
+    })
+    .from(stockLedger)
+    .groupBy(
+      stockLedger.facilityId,
+      stockLedger.storeId,
+      stockLedger.itemId,
+      stockLedger.batchId,
+    ),
+);
+
+export type ItemBatch = typeof itemBatches.$inferSelect;
+export type NewItemBatch = typeof itemBatches.$inferInsert;
+export type StockLedgerEntry = typeof stockLedger.$inferSelect;
+export type NewStockLedgerEntry = typeof stockLedger.$inferInsert;
+export type Dispense = typeof dispenses.$inferSelect;
+export type NewDispense = typeof dispenses.$inferInsert;
 
 export type Icd10Code = typeof icd10Codes.$inferSelect;
 export type NewIcd10Code = typeof icd10Codes.$inferInsert;

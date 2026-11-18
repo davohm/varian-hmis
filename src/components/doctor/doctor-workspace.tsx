@@ -448,6 +448,8 @@ export function DoctorWorkspace() {
     source.addEventListener("lab_results_verified", onClinical);
     source.addEventListener("prescription_created", onClinical);
     source.addEventListener("prescription_cancelled", onClinical);
+    source.addEventListener("prescription_dispensed", onClinical);
+    source.addEventListener("prescription_reversed", onClinical);
     return () => {
       clearInterval(interval);
       source.removeEventListener("queue_changed", onQueue);
@@ -465,6 +467,8 @@ export function DoctorWorkspace() {
       source.removeEventListener("lab_results_verified", onClinical);
       source.removeEventListener("prescription_created", onClinical);
       source.removeEventListener("prescription_cancelled", onClinical);
+      source.removeEventListener("prescription_dispensed", onClinical);
+      source.removeEventListener("prescription_reversed", onClinical);
       source.close();
     };
   }, [loadDetail, refreshQueue]);
