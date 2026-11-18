@@ -12,6 +12,10 @@ function text(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+function textArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
 export interface QueueRow {
   id: string;
   encounterId: string;
@@ -24,6 +28,10 @@ export interface QueueRow {
   priority: "red" | "yellow" | "green" | "normal";
   status: "waiting" | "called" | "in_service" | "done" | "cancelled";
   queuedAt: string;
+  sex: "male" | "female" | "other";
+  dob: string | null;
+  allergies: string[];
+  payerType: "cash" | "sha" | "insurance";
 }
 
 /** Queue order is clinical priority first, then arrival time. */
@@ -34,7 +42,8 @@ export async function getActiveQueue(
 ): Promise<QueueRow[]> {
   const result = await db.execute(sql`
     SELECT q.id, q.encounter_id, q.patient_id, q.department, q.priority, q.status,
-      q.queued_at, p.mrn, p.first_name, p.last_name, e.encounter_no
+      q.queued_at, p.mrn, p.first_name, p.last_name, p.sex, p.dob, p.allergies,
+      e.encounter_no, e.payer_type
     FROM queue_entries q
     INNER JOIN patients p ON p.id = q.patient_id AND p.facility_id = q.facility_id
     INNER JOIN encounters e ON e.id = q.encounter_id AND e.facility_id = q.facility_id
@@ -62,5 +71,13 @@ export async function getActiveQueue(
       ? text(row.status)
       : "waiting") as QueueRow["status"],
     queuedAt: text(row.queued_at),
+    sex: (["male", "female", "other"].includes(text(row.sex))
+      ? text(row.sex)
+      : "other") as QueueRow["sex"],
+    dob: row.dob == null ? null : text(row.dob),
+    allergies: textArray(row.allergies),
+    payerType: (["cash", "sha", "insurance"].includes(text(row.payer_type))
+      ? text(row.payer_type)
+      : "cash") as QueueRow["payerType"],
   }));
 }

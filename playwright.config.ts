@@ -6,6 +6,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: "list",
+  globalSetup: "./e2e/global-setup.ts",
   // The dev server compiles routes on demand; too many concurrent workers
   // make the first sign-in navigation exceed the assertion timeout.
   workers: 2,

@@ -18,6 +18,7 @@ import {
   queueEntries,
   rooms,
   stores,
+  triageVitals,
 } from "../src/server/db/schema";
 
 export function createTestDatabase() {
@@ -55,6 +56,7 @@ export async function insertTestBranch(db: TestDatabase["db"], facilityId: strin
 }
 
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
+  await db.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
   await db.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
   await db.delete(encounters).where(eq(encounters.facilityId, facilityId));
   await db.delete(nextOfKin).where(eq(nextOfKin.facilityId, facilityId));
