@@ -121,7 +121,35 @@ interface Overview {
   prices: PriceRow[];
 }
 
-type Tab = "setup" | "staff" | "catalogs" | "prices" | "audit";
+type Tab = "setup" | "staff" | "catalogs" | "prices" | "audit" | "sync";
+
+interface SyncStatus {
+  appMode: "cloud" | "clinic";
+  syncEnabled: boolean;
+  pendingCount: number;
+  oldestPendingSeconds: number | null;
+  failedCount: number;
+  lastSuccessAt: string | null;
+  lastPulledAt: string | null;
+  lastError: string | null;
+}
+
+interface FailedSyncRow {
+  id: string;
+  outboxId: string;
+  tableName: string;
+  recordId: string;
+  operation: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  payloadPreview: string;
+}
+
+interface SyncMonitor {
+  status: SyncStatus;
+  failedRows: FailedSyncRow[];
+}
 
 type FieldValue = string | boolean;
 
@@ -1032,6 +1060,147 @@ function AuditPanel() {
   );
 }
 
+function SyncPanel() {
+  const [monitor, setMonitor] = useState<SyncMonitor | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setMonitor(await requestJson<SyncMonitor>("/api/admin/sync"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load sync status");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const retry = useCallback(async (outboxIds: string[], label: string) => {
+    setBusyId(label);
+    try {
+      const result = await requestJson<{ retried: number }>("/api/admin/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          outboxIds.length === 1
+            ? { action: "retry", outboxIds }
+            : { action: "retry-all" },
+        ),
+      });
+      toast.success(`${result.retried} row(s) queued for retry.`);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry rows");
+    } finally {
+      setBusyId(null);
+    }
+  }, [load]);
+
+  const status = monitor?.status;
+  const oldestHours = status?.oldestPendingSeconds == null
+    ? null
+    : Math.floor(status.oldestPendingSeconds / 3600);
+  const stale = oldestHours !== null && oldestHours >= 24;
+
+  const metric = (label: string, value: string, testId: string) => (
+    <div className="rounded-lg border border-border bg-muted/30 p-3" data-testid={testId}>
+      <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-foreground">{value}</p>
+    </div>
+  );
+
+  const columns: Array<{ key: string; label: string; render: (row: FailedSyncRow) => ReactNode }> = [
+    { key: "when", label: "When", render: (row) => <span className="font-mono text-xs">{new Date(row.createdAt).toLocaleString("en-KE")}</span> },
+    { key: "record", label: "Record", render: (row) => <><span className="font-medium">{row.tableName}</span><br /><code className="text-[11px]">{row.recordId}</code></> },
+    { key: "operation", label: "Operation", render: (row) => row.operation },
+    { key: "attempts", label: "Attempts", render: (row) => <span className="tabular-nums">{row.attempts}</span> },
+    { key: "error", label: "Last error", render: (row) => <span className="text-xs text-[var(--status-critical)]">{row.lastError ?? "—"}</span> },
+    { key: "payload", label: "Payload", render: (row) => <code className="block max-w-xs truncate text-[11px]">{row.payloadPreview}</code> },
+    {
+      key: "actions",
+      label: "Actions",
+      render: (row) => (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busyId !== null}
+          data-testid={`admin-sync-retry-${row.outboxId}`}
+          onClick={() => void retry([row.outboxId], row.outboxId)}
+        >
+          {busyId === row.outboxId ? "Retrying…" : "Retry"}
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {stale ? (
+        <div
+          className="rounded-lg border border-[var(--status-critical)] bg-[var(--status-critical-background)] px-4 py-3 text-sm text-[var(--status-critical-foreground)]"
+          data-testid="admin-sync-stale-alert"
+          role="alert"
+        >
+          Oldest pending row is {oldestHours} hours old. Check the clinic server connection.
+        </div>
+      ) : null}
+
+      <Panel
+        title="Sync health"
+        description="Outbox state for the active facility. Clinic mode syncs to the configured cloud."
+        testId="admin-sync-status-panel"
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {metric("Mode", status?.appMode ?? "—", "admin-sync-mode-metric")}
+          {metric("Pending", String(status?.pendingCount ?? 0), "admin-sync-pending-metric")}
+          {metric("Failed", String(status?.failedCount ?? 0), "admin-sync-failed-metric")}
+          {metric("Oldest pending", oldestHours === null ? "—" : `${oldestHours}h`, "admin-sync-oldest-metric")}
+        </div>
+        <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-3">
+          <p data-testid="admin-sync-last-success">
+            Last successful push: <span className="font-mono text-foreground">{status?.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString("en-KE") : "never"}</span>
+          </p>
+          <p data-testid="admin-sync-last-pull">
+            Last catalog pull: <span className="font-mono text-foreground">{status?.lastPulledAt ? new Date(status.lastPulledAt).toLocaleString("en-KE") : "never"}</span>
+          </p>
+          <p data-testid="admin-sync-last-error">
+            Last error: <span className="font-mono text-foreground">{status?.lastError ?? "none"}</span>
+          </p>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Failed rows"
+        description="Rows that exhausted retries. Retry queues them again from the first backoff step."
+        testId="admin-sync-failed-panel"
+      >
+        <div className="mb-3 flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={(monitor?.failedRows.length ?? 0) === 0 || busyId !== null}
+            data-testid="admin-sync-retry-all"
+            onClick={() => void retry([], "all")}
+          >
+            {busyId === "all" ? "Retrying…" : "Retry all"}
+          </Button>
+        </div>
+        <DataTable
+          rows={(monitor?.failedRows ?? []).map((row) => ({ ...row, id: row.outboxId }))}
+          columns={columns}
+          testId="admin-sync-failed-rows"
+          empty={loading ? "Loading sync rows…" : "No failed rows."}
+        />
+      </Panel>
+    </div>
+  );
+}
+
 export function AdminWorkspace() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [tab, setTab] = useState<Tab>("setup");
@@ -1094,6 +1263,7 @@ export function AdminWorkspace() {
     { id: "catalogs", label: "Catalogs" },
     { id: "prices", label: "Price lists" },
     { id: "audit", label: "Audit" },
+    { id: "sync", label: "Sync" },
   ];
 
   if (!overview) {
@@ -1152,6 +1322,7 @@ export function AdminWorkspace() {
       {tab === "catalogs" ? <CatalogsPanel overview={overview} busy={busy} run={run} /> : null}
       {tab === "prices" ? <PriceListsPanel overview={overview} busy={busy} run={run} /> : null}
       {tab === "audit" ? <AuditPanel /> : null}
+      {tab === "sync" ? <SyncPanel /> : null}
     </div>
   );
 }

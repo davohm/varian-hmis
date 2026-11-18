@@ -23,6 +23,7 @@ test("admin workspace loads every section and filters audit events", async ({ pa
     { tab: "catalogs", panel: "admin-catalog-list" },
     { tab: "prices", panel: "admin-price-list-list" },
     { tab: "audit", panel: "admin-audit-filter-panel" },
+    { tab: "sync", panel: "admin-sync-status-panel" },
   ] as const;
 
   for (const section of sections) {

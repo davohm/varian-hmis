@@ -57,6 +57,7 @@ export const staffRoleScopes = pgTable(
       .references(() => facilities.id, { onDelete: "restrict" }),
     branchId: uuid("branch_id").references(() => branches.id, { onDelete: "restrict" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     userIdx: index("staff_role_scopes_user_idx").on(table.userId),

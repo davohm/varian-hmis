@@ -8,6 +8,7 @@ import { newId } from "../src/lib/uuid";
 import { recordAudit } from "../src/server/audit";
 import { APP_MODE, DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
+import { hashSyncToken } from "../src/server/sync/auth";
 import {
   account,
   branches,
@@ -21,6 +22,7 @@ import {
   services,
   staffProfiles,
   staffRoleScopes,
+  facilitySyncTokens,
   stockLedger,
   stores,
   user,
@@ -799,6 +801,21 @@ async function seed() {
     const facility = await upsertFacility(db);
     const branch = await upsertBranch(db, facility.id);
     const staff = await upsertStaff(db, facility.id, branch.id);
+
+    const syncToken = process.env.FACILITY_SYNC_TOKEN;
+    const syncDeviceKey = process.env.FACILITY_DEVICE_KEY?.trim() || "clinic-server";
+    if (syncToken && syncToken.length >= 16) {
+      await db
+        .insert(facilitySyncTokens)
+        .values({
+          facilityId: facility.id,
+          deviceKey: syncDeviceKey,
+          tokenHash: hashSyncToken(syncToken),
+          active: true,
+        })
+        .onConflictDoNothing({ target: [facilitySyncTokens.facilityId, facilitySyncTokens.deviceKey] });
+    }
+
     const icd10 = await upsertIcd10(db);
     const labCatalog = await upsertLabTests(db);
     const drugCatalog = await upsertDrugs(db);

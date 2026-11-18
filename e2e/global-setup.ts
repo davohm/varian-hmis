@@ -78,6 +78,11 @@ const API_ROUTES: Array<[method: "GET" | "POST", path: string]> = [
   ["GET", "/api/admin/overview"],
   ["GET", "/api/admin/audit?limit=5"],
   ["POST", "/api/admin/commands"],
+  ["GET", "/api/admin/sync"],
+  ["POST", "/api/admin/sync"],
+  ["GET", "/api/health"],
+  ["POST", "/api/sync/batch"],
+  ["GET", "/api/sync/pull"],
 ];
 
 /**

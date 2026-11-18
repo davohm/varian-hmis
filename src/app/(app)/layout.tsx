@@ -4,6 +4,9 @@ import { FacilitySwitcher } from "@/components/shell/facility-switcher";
 import { Sidebar } from "@/components/shell/sidebar";
 import { UserMenu } from "@/components/shell/user-menu";
 import { getSessionContext, requireStaff } from "@/server/auth/guards";
+import { db } from "@/server/db/client";
+import { APP_MODE } from "@/server/env";
+import { getSyncStatus } from "@/server/sync/outbox";
 import { ROLE_LABELS } from "@/lib/navigation";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -13,6 +16,29 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const role = staff.role;
   const roleLabel = role ? ROLE_LABELS[role] : "Staff";
+
+  let connectionLabel = "Online";
+  let connectionTone = "normal" as "normal" | "warning" | "critical";
+  if (APP_MODE === "clinic") {
+    const sync = await getSyncStatus(db, context.activeFacilityId);
+    if (sync.pendingCount > 0) {
+      connectionLabel = "Syncing";
+      connectionTone = "warning";
+    } else if (sync.syncEnabled && !sync.lastSuccessAt && !sync.lastPulledAt) {
+      connectionLabel = "Offline";
+      connectionTone = "critical";
+    }
+  }
+  const connectionClasses = {
+    normal: "bg-[var(--status-normal-background)] text-[var(--status-normal-foreground)]",
+    warning: "bg-[var(--status-warning-background)] text-[var(--status-warning-foreground)]",
+    critical: "bg-[var(--status-critical-background)] text-[var(--status-critical-foreground)]",
+  }[connectionTone];
+  const connectionDot = {
+    normal: "bg-[var(--status-normal)]",
+    warning: "bg-[var(--status-warning)]",
+    critical: "bg-[var(--status-critical)]",
+  }[connectionTone];
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -38,11 +64,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
           <div className="flex items-center gap-3">
             <span
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-[var(--status-normal-background)] px-3 py-1.5 text-xs font-medium text-[var(--status-normal-foreground)]"
+              className={`inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium ${connectionClasses}`}
               data-testid="connection-status"
             >
-              <span className="size-2 rounded-full bg-[var(--status-normal)]" aria-hidden="true" />
-              Online
+              <span className={`size-2 rounded-full ${connectionDot}`} aria-hidden="true" />
+              {connectionLabel}
             </span>
             <UserMenu name={staff.user.name} email={staff.user.email} roleLabel={roleLabel} />
           </div>

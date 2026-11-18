@@ -18,6 +18,7 @@ import {
   dispenses,
   encounters,
   facilities,
+  facilitySyncTokens,
   invoices,
   itemBatches,
   items,
@@ -40,6 +41,8 @@ import {
   staffProfiles,
   staffRoleScopes,
   stores,
+  syncOutbox,
+  syncReceived,
   triageVitals,
   user,
 } from "../src/server/db/schema";
@@ -113,8 +116,10 @@ export async function deleteTestActor(db: TestDatabase["db"], userId: string) {
 
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
   await db.transaction(async (tx) => {
-    // The stock and payment ledgers reject deletes outside test cleanup.
+    // The stock and payment ledgers reject deletes outside test cleanup, and
+    // sync capture must not recreate outbox rows for rows being torn down.
     await tx.execute(sql`SET LOCAL varian.ledger_cleanup = 'on'`);
+    await tx.execute(sql`SET LOCAL varian.sync_apply = 'on'`);
 
     const scopedUsers = await tx
       .select({ userId: staffRoleScopes.userId })
@@ -162,6 +167,9 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(rooms).where(eq(rooms.facilityId, facilityId));
     await tx.delete(departments).where(eq(departments.facilityId, facilityId));
     await tx.delete(branches).where(eq(branches.facilityId, facilityId));
+    await tx.delete(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
+    await tx.delete(syncReceived).where(eq(syncReceived.facilityId, facilityId));
+    await tx.delete(facilitySyncTokens).where(eq(facilitySyncTokens.facilityId, facilityId));
     await tx.delete(facilities).where(eq(facilities.id, facilityId));
   });
 }

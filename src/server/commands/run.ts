@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { findCommand } from "@/server/audit";
 import { db } from "@/server/db/client";
+import { APP_MODE } from "@/server/env";
 import type { DbExecutor } from "@/server/numbering";
 
 type AppDatabase = typeof db;
@@ -50,6 +51,23 @@ export async function runCommand<T>(
   const executor = options.database ?? db;
 
   return executor.transaction(async (tx) => {
+    const authority = await tx.execute(sql`
+      SELECT write_authority::text AS "writeAuthority"
+      FROM facilities
+      WHERE id = ${request.facilityId}::uuid
+      LIMIT 1
+    `);
+    const storedAuthority = ((authority as { rows?: Array<{ writeAuthority?: string }> }).rows ?? [])[0]?.writeAuthority;
+    if (
+      storedAuthority &&
+      ((APP_MODE === "cloud" && storedAuthority !== "cloud") ||
+        (APP_MODE === "clinic" && storedAuthority !== "clinic"))
+    ) {
+      throw new Error(
+        `Facility is owned by ${storedAuthority}; writes from ${APP_MODE} mode are not allowed`,
+      );
+    }
+
     const claim = await tx.execute(sql`
       INSERT INTO command_log (idempotency_key, facility_id, command, result, created_at)
       VALUES (

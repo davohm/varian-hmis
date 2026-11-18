@@ -79,6 +79,8 @@ for (const role of ROLES) {
       { method: "GET" as const, path: "/api/admin/staff", adminStatus: 200 },
       { method: "GET" as const, path: "/api/admin/overview", adminStatus: 200 },
       { method: "GET" as const, path: "/api/admin/audit?limit=5", adminStatus: 200 },
+      { method: "GET" as const, path: "/api/admin/sync", adminStatus: 200 },
+      { method: "POST" as const, path: "/api/admin/sync", adminStatus: 200, data: { action: "retry-all" } },
       // An unknown command still returns 400 for an admin: the guard passed and
       // the command allow-list rejected it.
       { method: "POST" as const, path: "/api/admin/commands", adminStatus: 400 },
@@ -87,11 +89,48 @@ for (const role of ROLES) {
     for (const endpoint of guardedEndpoints) {
       const response = await page.request.fetch(endpoint.path, {
         method: endpoint.method,
-        data: endpoint.method === "POST" ? { command: "unknown" } : undefined,
+        data: "data" in endpoint
+          ? endpoint.data
+          : endpoint.method === "POST"
+            ? { command: "unknown" }
+            : undefined,
       });
       expect(response.status(), `${endpoint.method} ${endpoint.path}`).toBe(
         role.slug === "admin" ? endpoint.adminStatus : 403,
       );
+    }
+
+    // Cloud sync endpoints use a facility token, never a browser session.
+    const tokenFacilityId = "00000000-0000-0000-0000-000000000000";
+    const tokenRecordId = "22222222-2222-4222-8222-222222222222";
+    const tokenEndpoints = [
+      {
+        method: "POST" as const,
+        path: "/api/sync/batch",
+        data: {
+          facilityId: tokenFacilityId,
+          deviceKey: "clinic-server",
+          rows: [
+            {
+              outboxId: "11111111-1111-4111-8111-111111111111",
+              facilityId: tokenFacilityId,
+              deviceKey: "clinic-server",
+              tableName: "patients",
+              recordId: tokenRecordId,
+              operation: "INSERT",
+              payload: { id: tokenRecordId, facility_id: tokenFacilityId },
+            },
+          ],
+        },
+      },
+      { method: "GET" as const, path: "/api/sync/pull?deviceKey=clinic-server" },
+    ];
+    for (const endpoint of tokenEndpoints) {
+      const response = await page.request.fetch(endpoint.path, {
+        method: endpoint.method,
+        data: "data" in endpoint ? endpoint.data : undefined,
+      });
+      expect(response.status(), `${endpoint.method} ${endpoint.path}`).toBe(401);
     }
 
     if (role.slug !== "admin") {

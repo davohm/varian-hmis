@@ -14,7 +14,9 @@
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "sync:worker": "tsx scripts/sync-worker.ts",
+    "sync:once": "tsx scripts/sync-worker.ts --once"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
