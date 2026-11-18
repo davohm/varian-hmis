@@ -1,3 +1,4 @@
+import { ReceptionWorkspace } from "@/components/reception/reception-workspace";
 import { Screen } from "@/components/shell/screen";
 import { requireScreen } from "@/server/auth/guards";
 
@@ -9,6 +10,8 @@ export default async function ReceptionPage() {
       description="Register patients, allocate MRNs and manage the visit queue."
       testId="screen-reception"
       role={staff.role}
-    />
+    >
+      <ReceptionWorkspace />
+    </Screen>
   );
 }

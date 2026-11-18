@@ -7,7 +7,8 @@ export function apiErrorResponse(error: unknown) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (error instanceof ForbiddenError) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    console.warn("[api] Forbidden request", { message: error.message });
+    return NextResponse.json({ error: "Forbidden", detail: error.message }, { status: 403 });
   }
   console.error(error);
   return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

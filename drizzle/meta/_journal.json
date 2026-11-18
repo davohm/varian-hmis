@@ -15,6 +15,13 @@
       "when": 1794976512914,
       "tag": "0001_regular_ben_urich",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794981057879,
+      "tag": "0002_safe_dreaming_celestial",
+      "breakpoints": true
     }
   ]
 }

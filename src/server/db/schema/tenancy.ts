@@ -28,7 +28,7 @@ export const departmentKindEnum = pgEnum("department_kind", [
 ]);
 export const storeKindEnum = pgEnum("store_kind", ["pharmacy", "main", "lab"]);
 
-const auditColumns = {
+export const auditColumns = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdBy: text("created_by"),

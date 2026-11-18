@@ -1,7 +1,7 @@
 import type { Role } from "@/server/db/schema/staff";
 
 export class ForbiddenError extends Error {
-  constructor(message = "Forbidden") {
+  constructor(message = "You do not have permission to perform this action.") {
     super(message);
     this.name = "ForbiddenError";
   }

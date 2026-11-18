@@ -82,6 +82,7 @@ describe("staff access rules", () => {
   it("exposes distinct guard errors for forbidden and unauthenticated access", () => {
     expect(new ForbiddenError()).toBeInstanceOf(Error);
     expect(new ForbiddenError().name).toBe("ForbiddenError");
+    expect(new ForbiddenError().message).toContain("do not have permission");
     expect(new UnauthorizedError().name).toBe("UnauthorizedError");
   });
 });

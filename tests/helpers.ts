@@ -10,8 +10,12 @@ import {
   branches,
   commandLog,
   departments,
+  encounters,
   facilities,
+  nextOfKin,
   numberSequences,
+  patients,
+  queueEntries,
   rooms,
   stores,
 } from "../src/server/db/schema";
@@ -37,7 +41,24 @@ export async function insertTestFacility(db: TestDatabase["db"]) {
   return { id, code };
 }
 
+export async function insertTestBranch(db: TestDatabase["db"], facilityId: string) {
+  const id = newId();
+  await db.insert(branches).values({
+    id,
+    facilityId,
+    code: `MAIN-${randomUUID().slice(0, 6).toUpperCase()}`,
+    name: "Main Branch",
+    isMain: true,
+    createdBy: "vitest",
+  });
+  return id;
+}
+
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
+  await db.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
+  await db.delete(encounters).where(eq(encounters.facilityId, facilityId));
+  await db.delete(nextOfKin).where(eq(nextOfKin.facilityId, facilityId));
+  await db.delete(patients).where(eq(patients.facilityId, facilityId));
   await db.delete(auditLog).where(eq(auditLog.facilityId, facilityId));
   await db.delete(commandLog).where(eq(commandLog.facilityId, facilityId));
   await db.delete(numberSequences).where(eq(numberSequences.facilityId, facilityId));
