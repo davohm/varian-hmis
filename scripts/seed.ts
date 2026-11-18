@@ -1,8 +1,9 @@
 import { hashPassword } from "better-auth/crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { fromCents, toCents } from "../src/lib/billing";
 import { newId } from "../src/lib/uuid";
 import { recordAudit } from "../src/server/audit";
 import { APP_MODE, DATABASE_URL } from "../src/server/env";
@@ -15,6 +16,9 @@ import {
   itemBatches,
   items,
   labTests,
+  priceLists,
+  prices,
+  services,
   staffProfiles,
   staffRoleScopes,
   stockLedger,
@@ -341,6 +345,227 @@ async function upsertDrugs(db: ReturnType<typeof createDatabase>["db"]) {
   return { total: DRUG_SEEDS.length, inserted: missing.length };
 }
 
+/* ------------------------------------------------------------------ */
+/* Billing catalogue                                                   */
+/* ------------------------------------------------------------------ */
+
+type SeedPayerType = "cash" | "sha" | "insurance";
+
+const PAYER_TYPES: SeedPayerType[] = ["cash", "sha", "insurance"];
+
+/** Negotiated lists sit above the cash counter price by payer. */
+const PAYER_MARKUP: Record<SeedPayerType, number> = {
+  cash: 1,
+  sha: 1.1,
+  insurance: 1.25,
+};
+
+interface ServiceSeed {
+  code: string;
+  name: string;
+  kind: "consultation" | "lab" | "procedure";
+  defaultPrice: string;
+}
+
+const SERVICE_SEEDS: ServiceSeed[] = [
+  { code: "CONS", name: "General Consultation", kind: "consultation", defaultPrice: "1000.00" },
+  { code: "DRESS", name: "Wound Dressing", kind: "procedure", defaultPrice: "500.00" },
+];
+
+/** Cash price per laboratory test, keyed by the test code. */
+const LAB_PRICES: Record<string, string> = {
+  FBC: "800.00",
+  MP: "300.00",
+  RBS: "200.00",
+  HBA1C: "1200.00",
+  UEC: "1500.00",
+  LFT: "1800.00",
+  URIN: "400.00",
+  PREG: "300.00",
+  TSH: "1500.00",
+  HIV: "500.00",
+  HBSAG: "700.00",
+  WIDAL: "600.00",
+};
+
+/** Cash price per dispensing unit, keyed by the item code. */
+const DRUG_PRICES: Record<string, string> = {
+  PARA500: "2.00",
+  PARA120: "150.00",
+  IBU400: "3.00",
+  DICLO50: "3.00",
+  AMOX500: "5.00",
+  AMOXCLAV625: "25.00",
+  AZITH500: "30.00",
+  CIPRO500: "8.00",
+  METRO400: "3.00",
+  COTRIM960: "3.00",
+  DOXY100: "4.00",
+  CETIR10: "2.00",
+  LORA10: "2.00",
+  OMEP20: "5.00",
+  RANT150: "3.00",
+  METFORMIN500: "3.00",
+  GLIB5: "3.00",
+  AMLOD5: "4.00",
+  LISIN10: "4.00",
+  HCTZ25: "3.00",
+  ATEN50: "3.00",
+  SALB100: "450.00",
+  PRED5: "3.00",
+  ARTEM20: "10.00",
+  QUIN300: "8.00",
+  ORS: "50.00",
+  ZINC20: "3.00",
+  FERR200: "3.00",
+  FOLIC5: "2.00",
+  VITC100: "2.00",
+  HYDRO25: "120.00",
+  CLOTRI1: "120.00",
+  GENTA01: "150.00",
+  NSALINE: "120.00",
+  RINGER: "140.00",
+  TRAMA50: "6.00",
+  DIAZ5: "3.00",
+  AMIT25: "3.00",
+  FLUOX20: "6.00",
+  CARBAM200: "5.00",
+};
+
+function payerPrice(base: string, payer: SeedPayerType): string {
+  return fromCents(Math.round(toCents(base) * PAYER_MARKUP[payer]));
+}
+
+/**
+ * Services, one price list per payer and a price for every service and
+ * medicine. Shared service rows are reused, existing prices are never
+ * overwritten (a negotiated price outlives a re-seed).
+ */
+async function upsertBillingCatalog(
+  db: ReturnType<typeof createDatabase>["db"],
+  facilityId: string,
+) {
+  const serviceSeeds: ServiceSeed[] = [
+    ...SERVICE_SEEDS,
+    ...LAB_TEST_SEEDS.map((test) => ({
+      code: test.code,
+      name: test.name,
+      kind: "lab" as const,
+      defaultPrice: LAB_PRICES[test.code] ?? "500.00",
+    })),
+  ];
+  const serviceCodes = serviceSeeds.map((service) => service.code);
+
+  const existingServices = await db
+    .select({ code: services.code })
+    .from(services)
+    .where(and(isNull(services.facilityId), inArray(services.code, serviceCodes)));
+  const knownServices = new Set(existingServices.map((row) => row.code));
+  const missingServices = serviceSeeds.filter((service) => !knownServices.has(service.code));
+
+  if (missingServices.length > 0) {
+    await db.insert(services).values(
+      missingServices.map((service) => ({
+        id: newId(),
+        facilityId: null,
+        code: service.code,
+        name: service.name,
+        kind: service.kind,
+        defaultPrice: service.defaultPrice,
+        createdBy: "seed",
+      })),
+    );
+  }
+
+  const serviceRows = await db
+    .select({ id: services.id, code: services.code, defaultPrice: services.defaultPrice })
+    .from(services)
+    .where(and(isNull(services.facilityId), inArray(services.code, serviceCodes)));
+
+  const priceListIds = new Map<SeedPayerType, string>();
+  for (const payer of PAYER_TYPES) {
+    const [row] = await db
+      .insert(priceLists)
+      .values({
+        id: newId(),
+        facilityId,
+        name: `${payer === "cash" ? "Cash" : payer === "sha" ? "SHA" : "Insurance"} price list`,
+        payerType: payer,
+        createdBy: "seed",
+      })
+      .onConflictDoUpdate({
+        target: [priceLists.facilityId, priceLists.payerType],
+        set: { active: true, updatedAt: new Date() },
+      })
+      .returning({ id: priceLists.id });
+    priceListIds.set(payer, row.id);
+  }
+
+  const itemRows = await db
+    .select({ id: items.id, code: items.code })
+    .from(items)
+    .where(inArray(items.code, DRUG_SEEDS.map((drug) => drug.code)));
+
+  const existingPrices = await db
+    .select({ priceListId: prices.priceListId, serviceId: prices.serviceId, itemId: prices.itemId })
+    .from(prices)
+    .where(eq(prices.facilityId, facilityId));
+  const knownPrices = new Set(
+    existingPrices.map((row) => `${row.priceListId}:${row.serviceId ?? row.itemId}`),
+  );
+
+  const pending: Array<{
+    id: string;
+    facilityId: string;
+    priceListId: string;
+    serviceId: string | null;
+    itemId: string | null;
+    amount: string;
+    createdBy: string;
+  }> = [];
+
+  for (const payer of PAYER_TYPES) {
+    const priceListId = priceListIds.get(payer);
+    if (!priceListId) continue;
+
+    for (const service of serviceRows) {
+      if (knownPrices.has(`${priceListId}:${service.id}`)) continue;
+      pending.push({
+        id: newId(),
+        facilityId,
+        priceListId,
+        serviceId: service.id,
+        itemId: null,
+        amount: payerPrice(service.defaultPrice, payer),
+        createdBy: "seed",
+      });
+    }
+
+    for (const item of itemRows) {
+      if (knownPrices.has(`${priceListId}:${item.id}`)) continue;
+      pending.push({
+        id: newId(),
+        facilityId,
+        priceListId,
+        serviceId: null,
+        itemId: item.id,
+        amount: payerPrice(DRUG_PRICES[item.code] ?? "5.00", payer),
+        createdBy: "seed",
+      });
+    }
+  }
+
+  for (let index = 0; index < pending.length; index += 200) {
+    await db.insert(prices).values(pending.slice(index, index + 200));
+  }
+
+  return {
+    services: serviceRows.length,
+    priceLists: priceListIds.size,
+    prices: pending.length,
+  };
+}
+
 function addDaysIso(days: number): string {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -577,6 +802,7 @@ async function seed() {
     const icd10 = await upsertIcd10(db);
     const labCatalog = await upsertLabTests(db);
     const drugCatalog = await upsertDrugs(db);
+    const billing = await upsertBillingCatalog(db, facility.id);
 
     const storeSeeds = [
       { name: "Pharmacy", kind: "pharmacy" as const },
@@ -611,6 +837,7 @@ async function seed() {
           stores: allStores.map(({ id, name, kind }) => ({ id, name, kind })),
           staff: { count: staff.count, password: staff.password },
           catalog: { icd10, labTests: labCatalog, drugs: drugCatalog },
+          billing,
           pharmacyStock,
         },
         null,

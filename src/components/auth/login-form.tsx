@@ -23,7 +23,13 @@ export function LoginForm() {
     try {
       const result = await authClient.signIn.email({ email, password });
       if (result.error) {
-        setError("The email or password is incorrect.");
+        // A throttled request must not be reported as a wrong password, or the
+        // user keeps retrying and stays locked out.
+        setError(
+          result.error.status === 429
+            ? "Too many sign-in attempts. Wait a few seconds and try again."
+            : "The email or password is incorrect.",
+        );
         return;
       }
 

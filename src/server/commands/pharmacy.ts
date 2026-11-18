@@ -14,6 +14,7 @@ import {
 } from "@/lib/pharmacy";
 import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
+import { syncEncounterCharges } from "@/server/charges";
 import {
   dispenses,
   encounters,
@@ -927,6 +928,12 @@ export async function dispensePrescription(
         remaining: prescription.quantity - totalDispensed,
       });
 
+      await syncEncounterCharges(tx, {
+        facilityId: values.facilityId,
+        encounterId: prescription.encounterId,
+        actor: { userId, ip: values.actor.ip, deviceId: values.actor.deviceId },
+      });
+
       return {
         prescriptionId: prescription.id,
         status: status as DispensePrescriptionResult["status"],
@@ -1059,6 +1066,12 @@ export async function reverseDispense(
         prescriptionId: prescription.id,
         itemId: prescription.itemId,
         quantity: reversedQuantity,
+      });
+
+      await syncEncounterCharges(tx, {
+        facilityId: values.facilityId,
+        encounterId: prescription.encounterId,
+        actor: { userId, ip: values.actor.ip, deviceId: values.actor.deviceId },
       });
 
       return { prescriptionId: prescription.id, status: "prescribed", reversedQuantity };

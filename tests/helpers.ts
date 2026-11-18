@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 
 import { newId } from "../src/lib/uuid";
 import { DATABASE_URL } from "../src/server/env";
@@ -8,6 +8,8 @@ import { createDatabase } from "../src/server/db/client";
 import {
   auditLog,
   branches,
+  cashierSessions,
+  charges,
   clinicalNotes,
   commandLog,
   departments,
@@ -15,6 +17,7 @@ import {
   dispenses,
   encounters,
   facilities,
+  invoices,
   itemBatches,
   items,
   labOrderItems,
@@ -24,9 +27,13 @@ import {
   nextOfKin,
   numberSequences,
   patients,
+  payments,
   prescriptions,
+  priceLists,
+  prices,
   queueEntries,
   rooms,
+  services,
   stockLedger,
   stores,
   triageVitals,
@@ -68,8 +75,19 @@ export async function insertTestBranch(db: TestDatabase["db"], facilityId: strin
 
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
   await db.transaction(async (tx) => {
-    // The stock ledger trigger rejects deletes outside test cleanup.
+    // The stock and payment ledgers reject deletes outside test cleanup.
     await tx.execute(sql`SET LOCAL varian.ledger_cleanup = 'on'`);
+    // Reversals reference the payment they reverse, so clear them first.
+    await tx
+      .delete(payments)
+      .where(and(eq(payments.facilityId, facilityId), isNotNull(payments.reversedPaymentId)));
+    await tx.delete(payments).where(eq(payments.facilityId, facilityId));
+    await tx.delete(charges).where(eq(charges.facilityId, facilityId));
+    await tx.delete(invoices).where(eq(invoices.facilityId, facilityId));
+    await tx.delete(cashierSessions).where(eq(cashierSessions.facilityId, facilityId));
+    await tx.delete(prices).where(eq(prices.facilityId, facilityId));
+    await tx.delete(priceLists).where(eq(priceLists.facilityId, facilityId));
+    await tx.delete(services).where(eq(services.facilityId, facilityId));
     await tx.delete(dispenses).where(eq(dispenses.facilityId, facilityId));
     await tx.delete(stockLedger).where(eq(stockLedger.facilityId, facilityId));
     await tx.delete(itemBatches).where(eq(itemBatches.facilityId, facilityId));

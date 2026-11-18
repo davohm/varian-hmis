@@ -15,6 +15,7 @@ import {
 } from "@/lib/clinical";
 import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
+import { syncEncounterCharges } from "@/server/charges";
 import {
   clinicalNotes,
   diagnoses,
@@ -43,6 +44,29 @@ const baseSchema = {
 function actorId(values: { actor: { userId?: string | null } }): string {
   if (!values.actor.userId) throw new Error("A signed-in user is required");
   return values.actor.userId;
+}
+
+/**
+ * Keep the visit's billable lines in step with the clinical record. The sync
+ * only touches charges that are not locked on a paid or void invoice.
+ */
+async function syncBill(
+  tx: CommandTransaction,
+  values: {
+    facilityId: string;
+    actor: { userId?: string | null; ip?: string | null; deviceId?: string | null };
+  },
+  encounterId: string,
+): Promise<void> {
+  await syncEncounterCharges(tx, {
+    facilityId: values.facilityId,
+    encounterId,
+    actor: {
+      userId: actorId(values),
+      ip: values.actor.ip,
+      deviceId: values.actor.deviceId,
+    },
+  });
 }
 
 interface LoadedEncounter {
@@ -178,6 +202,8 @@ export async function startConsultation(
           status: "in_service",
         });
       }
+
+      await syncBill(tx, values, encounter.id);
 
       return { encounterId: encounter.id, queueEntryId: queueEntry.id, status: "in_service" };
     },
@@ -603,6 +629,8 @@ export async function orderLabTests(
         testIds: available.map((test) => test.id),
       });
 
+      await syncBill(tx, values, encounter.id);
+
       return { labOrderId, itemIds, status: "ordered" as const };
     },
     options,
@@ -694,6 +722,8 @@ export async function cancelLabOrder(
         encounterId: encounter.id,
         labOrderId: order.id,
       });
+
+      await syncBill(tx, values, encounter.id);
 
       return { labOrderId: order.id, status: "cancelled" as const };
     },
@@ -876,6 +906,8 @@ export async function cancelPrescription(
         encounterId: encounter.id,
         prescriptionId: prescription.id,
       });
+
+      await syncBill(tx, values, encounter.id);
 
       return { prescriptionId: prescription.id, status: "cancelled" as const };
     },

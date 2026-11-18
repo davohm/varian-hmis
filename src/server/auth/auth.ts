@@ -18,6 +18,13 @@ export const auth = betterAuth({
     disableSignUp: true,
     minPasswordLength: 10,
   },
+  // Better Auth applies a 3-per-10s limit to every /sign-in path and enables
+  // the limiter only in production. The Playwright suite signs in as six roles
+  // in quick succession from one address, so its server sets AUTH_RATE_LIMIT=off.
+  // Every other environment keeps the production default.
+  rateLimit: {
+    enabled: process.env.AUTH_RATE_LIMIT === "off" ? false : process.env.NODE_ENV === "production",
+  },
   session: {
     expiresIn: 60 * 60 * 12,
     updateAge: 60 * 60,
