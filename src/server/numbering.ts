@@ -1,0 +1,70 @@
+import { sql, type SQL } from "drizzle-orm";
+
+export type DbExecutor = {
+  execute: (query: SQL) => Promise<unknown>;
+};
+
+export type NumberScope = "mrn" | "encounter" | "invoice" | "receipt";
+
+const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
+  mrn: { infix: "", width: 5 },
+  encounter: { infix: "E", width: 6 },
+  invoice: { infix: "I", width: 6 },
+  receipt: { infix: "R", width: 6 },
+};
+
+function readValue(result: unknown): number {
+  const rows = (result as { rows?: Array<{ value?: number | string }> }).rows;
+  const value = rows?.[0]?.value;
+  if (value === undefined || value === null) {
+    throw new Error("next_number() returned no value");
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`Invalid next_number() value: ${String(value)}`);
+  }
+  return parsed;
+}
+
+/**
+ * Allocate the next gap-free number inside the caller's transaction.
+ * The PostgreSQL function performs the locking upsert atomically.
+ */
+export async function allocateNumber(
+  db: DbExecutor,
+  facilityId: string,
+  scope: NumberScope | string,
+): Promise<number> {
+  if (!facilityId) throw new Error("facilityId is required");
+  if (!scope) throw new Error("scope is required");
+
+  const result = await db.execute(
+    sql`SELECT next_number(${facilityId}::uuid, ${scope}::text) AS value`,
+  );
+  return readValue(result);
+}
+
+export const nextNumber = allocateNumber;
+
+export function formatNumber(
+  facilityCode: string,
+  scope: NumberScope,
+  value: number,
+  date: Date = new Date(),
+): string {
+  const config = scopeFormat[scope];
+  const year = String(date.getFullYear()).slice(-2);
+  const core = config.infix
+    ? `${facilityCode}-${config.infix}-${year}`
+    : `${facilityCode}-${year}`;
+  return `${core}-${String(value).padStart(config.width, "0")}`;
+}
+
+export async function nextFormattedNumber(
+  db: DbExecutor,
+  facility: { id: string; code: string },
+  scope: NumberScope,
+): Promise<string> {
+  const value = await allocateNumber(db, facility.id, scope);
+  return formatNumber(facility.code, scope, value);
+}
