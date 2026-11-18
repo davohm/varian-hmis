@@ -8,6 +8,7 @@ import { authClient } from "@/lib/auth-client";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -48,11 +49,13 @@ export function UserMenu({ name, email, roleLabel }: UserMenuProps) {
         <span className="hidden sm:inline">{name}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>
-          <div className="font-medium">{name}</div>
-          <div className="font-mono text-xs text-muted-foreground">{email}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{roleLabel}</div>
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <div className="font-medium">{name}</div>
+            <div className="font-mono text-xs text-muted-foreground">{email}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{roleLabel}</div>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>
           <LogOut className="size-4" aria-hidden="true" />

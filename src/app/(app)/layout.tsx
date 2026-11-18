@@ -24,24 +24,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </a>
       <Sidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-6 py-3">
-          <div className="min-w-0">
-            <div className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-              {context.facilities.find((item) => item.id === context.activeFacilityId)?.code ?? "FAM"}
-            </div>
-            <div className="truncate text-sm font-medium">
-              {context.facilities.find((item) => item.id === context.activeFacilityId)?.name ??
-                "Family Afya Modern Medical Centre"}
-            </div>
-          </div>
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-6 py-2.5">
           <div className="flex items-center gap-3">
+            <span className="hidden font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase lg:block">
+              Facility
+            </span>
+            <div className="hidden h-5 w-px bg-border lg:block" aria-hidden="true" />
             <FacilitySwitcher
               facilities={context.facilities}
               activeFacilityId={context.activeFacilityId}
               activeBranchId={context.activeBranchId}
             />
+          </div>
+          <div className="flex items-center gap-3">
             <span
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground"
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-[var(--status-normal-background)] px-3 py-1.5 text-xs font-medium text-[var(--status-normal-foreground)]"
               data-testid="connection-status"
             >
               <span className="size-2 rounded-full bg-[var(--status-normal)]" aria-hidden="true" />

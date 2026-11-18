@@ -1,10 +1,10 @@
 "use client";
 
+import { ShieldPlus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
@@ -55,14 +55,18 @@ export function LoginForm() {
   }
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader className="border-b border-border">
-        <div className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-          Secure staff access
-        </div>
-        <CardTitle className="mt-2 text-xl">Sign in to Varian HMIS</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="w-full rounded-lg border border-border bg-card shadow-sm">
+      <div className="border-b border-border px-8 pt-8 pb-6">
+        <span className="grid size-11 place-items-center rounded-md bg-primary">
+          <ShieldPlus className="size-6 text-primary-foreground" aria-hidden="true" />
+        </span>
+        <h1 className="mt-4 text-lg font-semibold text-primary">Sign in to your account</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Use the staff credentials issued by your facility administrator.
+        </p>
+      </div>
+
+      <div className="px-8 py-6">
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="email">Work email</Label>
@@ -71,6 +75,7 @@ export function LoginForm() {
               name="email"
               type="email"
               autoComplete="username"
+              placeholder="name@fam.test"
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -97,7 +102,7 @@ export function LoginForm() {
               id="login-error"
               role="alert"
               data-testid="login-error"
-              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="rounded-md border border-destructive/30 bg-[var(--status-critical-background)] px-3 py-2 text-sm text-[var(--status-critical-foreground)]"
             >
               {error}
             </p>
@@ -106,7 +111,14 @@ export function LoginForm() {
             {pending ? "Signing in…" : "Sign in"}
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+
+      <div className="rounded-b-lg border-t border-border bg-secondary px-8 py-3">
+        <p className="text-xs leading-5 text-secondary-foreground">
+          Problems signing in? Contact your facility administrator — access is limited to
+          provisioned staff accounts.
+        </p>
+      </div>
+    </div>
   );
 }

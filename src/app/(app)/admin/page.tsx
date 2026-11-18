@@ -18,6 +18,7 @@ export default async function AdminPage() {
       title="Administration"
       description="Staff, facilities, catalogues and audit activity."
       testId="screen-admin"
+      role={staff.role}
     >
       <div className="overflow-hidden border border-border bg-card">
         <div className="border-b border-border px-5 py-4">
