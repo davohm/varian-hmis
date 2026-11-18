@@ -1,0 +1,123 @@
+code,description,chapter
+A09,"Infectious gastroenteritis and colitis, unspecified",Certain infectious and parasitic diseases
+A15.0,"Tuberculosis of lung, confirmed by sputum microscopy with or without culture",Certain infectious and parasitic diseases
+A15.9,"Respiratory tuberculosis unspecified, confirmed bacteriologically and histologically",Certain infectious and parasitic diseases
+A91,"Dengue haemorrhagic fever",Certain infectious and parasitic diseases
+B50.9,"Plasmodium falciparum malaria, unspecified",Certain infectious and parasitic diseases
+B54,"Unspecified malaria",Certain infectious and parasitic diseases
+B24,"Unspecified human immunodeficiency virus (HIV) disease",Certain infectious and parasitic diseases
+B18.2,"Chronic viral hepatitis C",Certain infectious and parasitic diseases
+D50.9,"Iron deficiency anaemia, unspecified",Diseases of the blood and blood-forming organs
+D64.9,"Anaemia, unspecified",Diseases of the blood and blood-forming organs
+E10.9,"Type 1 diabetes mellitus without complications",Endocrine nutritional and metabolic diseases
+E11.9,"Type 2 diabetes mellitus without complications",Endocrine nutritional and metabolic diseases
+E11.65,"Type 2 diabetes mellitus with hyperglycaemia",Endocrine nutritional and metabolic diseases
+E03.9,"Hypothyroidism, unspecified",Endocrine nutritional and metabolic diseases
+E05.9,"Thyrotoxicosis, unspecified",Endocrine nutritional and metabolic diseases
+E66.9,"Obesity, unspecified",Endocrine nutritional and metabolic diseases
+E86,"Volume depletion",Endocrine nutritional and metabolic diseases
+E87.6,"Hypokalaemia",Endocrine nutritional and metabolic diseases
+F32.9,"Major depressive disorder, single episode, unspecified",Mental and behavioural disorders
+F41.1,"Generalized anxiety disorder",Mental and behavioural disorders
+F41.9,"Anxiety disorder, unspecified",Mental and behavioural disorders
+F10.2,"Alcohol dependence syndrome",Mental and behavioural disorders
+G40.9,"Epilepsy, unspecified",Diseases of the nervous system
+G43.9,"Migraine, unspecified",Diseases of the nervous system
+G44.2,"Tension-type headache",Diseases of the nervous system
+G03.9,"Meningitis, unspecified",Diseases of the nervous system
+H10.9,"Conjunctivitis, unspecified",Diseases of the eye and adnexa
+H25.9,"Unspecified senile cataract",Diseases of the eye and adnexa
+H52.4,"Presbyopia",Diseases of the eye and adnexa
+H66.9,"Otitis media, unspecified",Diseases of the ear and mastoid process
+H81.1,"Benign paroxysmal vertigo",Diseases of the ear and mastoid process
+I10,"Essential (primary) hypertension",Diseases of the circulatory system
+I11.9,"Hypertensive heart disease without heart failure",Diseases of the circulatory system
+I20.9,"Angina pectoris, unspecified",Diseases of the circulatory system
+I21.9,"Acute myocardial infarction, unspecified",Diseases of the circulatory system
+I25.9,"Chronic ischaemic heart disease, unspecified",Diseases of the circulatory system
+I48,"Atrial fibrillation and flutter",Diseases of the circulatory system
+I50.9,"Heart failure, unspecified",Diseases of the circulatory system
+I63.9,"Cerebral infarction, unspecified",Diseases of the circulatory system
+I64,"Stroke, not specified as haemorrhage or infarction",Diseases of the circulatory system
+I80.2,"Phlebitis and thrombophlebitis of other deep vessels of lower extremities",Diseases of the circulatory system
+I95.9,"Hypotension, unspecified",Diseases of the circulatory system
+J00,"Acute nasopharyngitis (common cold)",Diseases of the respiratory system
+J01.9,"Acute sinusitis, unspecified",Diseases of the respiratory system
+J02.9,"Acute pharyngitis, unspecified",Diseases of the respiratory system
+J03.9,"Acute tonsillitis, unspecified",Diseases of the respiratory system
+J06.9,"Acute upper respiratory infection, unspecified",Diseases of the respiratory system
+J18.9,"Pneumonia, unspecified organism",Diseases of the respiratory system
+J20.9,"Acute bronchitis, unspecified",Diseases of the respiratory system
+J30.4,"Allergic rhinitis, unspecified",Diseases of the respiratory system
+J45.9,"Asthma, unspecified",Diseases of the respiratory system
+J44.9,"Chronic obstructive pulmonary disease, unspecified",Diseases of the respiratory system
+J96.0,"Acute respiratory failure",Diseases of the respiratory system
+K02.9,"Dental caries, unspecified",Diseases of the digestive system
+K04.7,"Periapical abscess without sinus",Diseases of the digestive system
+K21.9,"Gastro-oesophageal reflux disease without oesophagitis",Diseases of the digestive system
+K29.7,"Gastritis, unspecified",Diseases of the digestive system
+K30,"Functional dyspepsia",Diseases of the digestive system
+K35.80,"Unspecified acute appendicitis",Diseases of the digestive system
+K40.90,"Unilateral inguinal hernia, without obstruction or gangrene, not specified as recurrent",Diseases of the digestive system
+K52.9,"Noninfective gastroenteritis and colitis, unspecified",Diseases of the digestive system
+K59.0,"Constipation",Diseases of the digestive system
+K80.20,"Calculus of gallbladder without cholecystitis, without obstruction",Diseases of the digestive system
+K92.2,"Gastrointestinal haemorrhage, unspecified",Diseases of the digestive system
+L01.0,"Impetigo",Diseases of the skin and subcutaneous tissue
+L02.9,"Cutaneous abscess, furuncle and carbuncle, unspecified",Diseases of the skin and subcutaneous tissue
+L03.90,"Cellulitis, unspecified",Diseases of the skin and subcutaneous tissue
+L20.9,"Atopic dermatitis, unspecified",Diseases of the skin and subcutaneous tissue
+L23.9,"Allergic contact dermatitis, unspecified cause",Diseases of the skin and subcutaneous tissue
+L30.9,"Dermatitis, unspecified",Diseases of the skin and subcutaneous tissue
+L40.9,"Psoriasis, unspecified",Diseases of the skin and subcutaneous tissue
+L50.9,"Urticaria, unspecified",Diseases of the skin and subcutaneous tissue
+L70.0,"Acne vulgaris",Diseases of the skin and subcutaneous tissue
+L84,"Corns and callosities",Diseases of the skin and subcutaneous tissue
+M06.9,"Rheumatoid arthritis, unspecified",Diseases of the musculoskeletal system
+M10.9,"Gout, unspecified",Diseases of the musculoskeletal system
+M17.9,"Gonarthrosis, unspecified",Diseases of the musculoskeletal system
+M25.50,"Pain in unspecified joint",Diseases of the musculoskeletal system
+M47.9,"Spondylosis, unspecified",Diseases of the musculoskeletal system
+M54.2,"Cervicalgia",Diseases of the musculoskeletal system
+M54.5,"Low back pain",Diseases of the musculoskeletal system
+M75.1,"Rotator cuff syndrome",Diseases of the musculoskeletal system
+M79.1,"Myalgia",Diseases of the musculoskeletal system
+M79.7,"Fibromyalgia",Diseases of the musculoskeletal system
+N10,"Acute tubulo-interstitial nephritis",Diseases of the genitourinary system
+N18.9,"Chronic kidney disease, unspecified",Diseases of the genitourinary system
+N20.0,"Calculus of kidney",Diseases of the genitourinary system
+N30.0,"Acute cystitis",Diseases of the genitourinary system
+N39.0,"Urinary tract infection, site not specified",Diseases of the genitourinary system
+N40,"Enlarged prostate",Diseases of the genitourinary system
+N83.2,"Other and unspecified ovarian cysts",Diseases of the genitourinary system
+N91.2,"Amenorrhoea, unspecified",Diseases of the genitourinary system
+N94.6,"Dysmenorrhoea, unspecified",Diseases of the genitourinary system
+N97.9,"Female infertility, unspecified",Diseases of the genitourinary system
+O21.0,"Mild hyperemesis gravidarum",Pregnancy childbirth and the puerperium
+O26.89,"Other specified pregnancy related conditions",Pregnancy childbirth and the puerperium
+O47.9,"False labour, unspecified",Pregnancy childbirth and the puerperium
+O80,"Encounter for full-term uncomplicated delivery",Pregnancy childbirth and the puerperium
+R05.9,"Cough, unspecified",Symptoms signs and abnormal findings
+R07.4,"Chest pain, unspecified",Symptoms signs and abnormal findings
+R10.4,"Other and unspecified abdominal pain",Symptoms signs and abnormal findings
+R11.2,"Nausea with vomiting, unspecified",Symptoms signs and abnormal findings
+R42,"Dizziness and giddiness",Symptoms signs and abnormal findings
+R50.9,"Fever, unspecified",Symptoms signs and abnormal findings
+R51.9,"Headache, unspecified",Symptoms signs and abnormal findings
+R53.83,"Other fatigue",Symptoms signs and abnormal findings
+R60.0,"Localized oedema",Symptoms signs and abnormal findings
+R63.4,"Abnormal weight loss",Symptoms signs and abnormal findings
+S00.01,"Abrasion of scalp",Injury poisoning and external causes
+S01.81,"Laceration without foreign body of other part of head",Injury poisoning and external causes
+S52.501,"Unspecified fracture of the lower end of right radius",Injury poisoning and external causes
+S61.0,"Open wound of fingertip without damage to nail",Injury poisoning and external causes
+S83.6,"Sprain and strain of other and unspecified parts of knee",Injury poisoning and external causes
+S93.4,"Sprain and strain of ankle",Injury poisoning and external causes
+T14.1,"Open wound of unspecified body region",Injury poisoning and external causes
+T78.4,"Allergy, unspecified",Injury poisoning and external causes
+T81.4,"Infection following a procedure",Injury poisoning and external causes
+Z00.00,"Encounter for general adult medical examination without abnormal findings",Factors influencing health status
+Z23,"Encounter for immunization",Factors influencing health status
+Z34.90,"Encounter for supervision of normal pregnancy, unspecified, unspecified trimester",Factors influencing health status
+Z71.3,"Dietary counselling and surveillance",Factors influencing health status
+Z76.0,"Encounter for issue of repeat prescription",Factors influencing health status

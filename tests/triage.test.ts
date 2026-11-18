@@ -295,10 +295,15 @@ describe("recordTriageVitals", () => {
           ),
         );
         expect(
-          events.find((event) => event.type === "triage.recorded"),
+          events.find(
+            (event) =>
+              event.type === "triage.recorded" && event.encounterId === patient.encounterId,
+          ),
         ).toMatchObject({ category: "yellow", doctorQueueEntryId: result.doctorQueueEntryId });
         expect(
-          events.find((event) => event.type === "queue.queued"),
+          events.find(
+            (event) => event.type === "queue.queued" && event.encounterId === patient.encounterId,
+          ),
         ).toMatchObject({ department: "Doctor", priority: "yellow" });
       } finally {
         await subscription.close();

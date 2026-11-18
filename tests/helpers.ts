@@ -8,13 +8,21 @@ import { createDatabase } from "../src/server/db/client";
 import {
   auditLog,
   branches,
+  clinicalNotes,
   commandLog,
   departments,
+  diagnoses,
   encounters,
   facilities,
+  items,
+  labOrderItems,
+  labOrders,
+  labResults,
+  labTests,
   nextOfKin,
   numberSequences,
   patients,
+  prescriptions,
   queueEntries,
   rooms,
   stores,
@@ -56,6 +64,14 @@ export async function insertTestBranch(db: TestDatabase["db"], facilityId: strin
 }
 
 export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: string) {
+  await db.delete(labResults).where(eq(labResults.facilityId, facilityId));
+  await db.delete(labOrderItems).where(eq(labOrderItems.facilityId, facilityId));
+  await db.delete(labOrders).where(eq(labOrders.facilityId, facilityId));
+  await db.delete(prescriptions).where(eq(prescriptions.facilityId, facilityId));
+  await db.delete(diagnoses).where(eq(diagnoses.facilityId, facilityId));
+  await db.delete(clinicalNotes).where(eq(clinicalNotes.facilityId, facilityId));
+  await db.delete(items).where(eq(items.facilityId, facilityId));
+  await db.delete(labTests).where(eq(labTests.facilityId, facilityId));
   await db.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
   await db.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
   await db.delete(encounters).where(eq(encounters.facilityId, facilityId));

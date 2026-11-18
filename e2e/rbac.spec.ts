@@ -100,10 +100,10 @@ test("failed sign-in is written to the audit log", async ({ page }) => {
   const body = (await auditResponse.json()) as {
     events: Array<{ action: string; details?: { email?: string } }>;
   };
-  expect(
-    body.events.some(
-      (event) =>
-        event.action === "auth.sign_in.failed" && event.details?.email === "admin@fam.test",
-    ),
-  ).toBe(true);
+  const recent = body.events.map(
+    (event) => `${event.action}:${event.details?.email ?? ""}`,
+  );
+  expect(recent, `Recent audit events: ${recent.join(", ")}`).toContain(
+    "auth.sign_in.failed:admin@fam.test",
+  );
 });

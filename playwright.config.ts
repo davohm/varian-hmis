@@ -10,8 +10,10 @@ export default defineConfig({
   // The dev server compiles routes on demand; too many concurrent workers
   // make the first sign-in navigation exceed the assertion timeout.
   workers: 2,
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  timeout: 90_000,
+  // The dev server compiles each route on first hit; a cold route can take
+  // ~10s, so assertions need more room than a built app would.
+  expect: { timeout: 30_000 },
   use: {
     baseURL: "http://127.0.0.1:3000",
     trace: "on-first-retry",
