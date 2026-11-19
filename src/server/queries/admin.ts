@@ -107,6 +107,7 @@ export async function listSetupStores(database: AdminDatabase, facilityId: strin
 }
 
 export interface StaffRow {
+  id: string;
   userId: string;
   name: string;
   email: string;
@@ -124,6 +125,7 @@ export async function listAdminStaff(
 ): Promise<StaffRow[]> {
   return database
     .select({
+      id: staffRoleScopes.id,
       userId: user.id,
       name: user.name,
       email: user.email,

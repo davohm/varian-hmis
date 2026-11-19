@@ -54,6 +54,7 @@ import {
   staffRoleScopes,
   user,
 } from "../src/server/db/schema";
+import { listAdminStaff } from "../src/server/queries/admin";
 import {
   cleanupTestFacility,
   createTestDatabase,
@@ -524,6 +525,30 @@ describe("administration commands", () => {
           database: ctx.db,
         }),
       ).rejects.toThrow("Staff scope not found");
+    });
+  });
+
+  it("returns unique row ids for staff so tables can key multi-scope accounts", async () => {
+    await withFacility(async (scope) => {
+      const created = await createStaff(
+        input(scope, {
+          name: "Keyed Staff",
+          email: `staffkeys-${token("K").toLowerCase()}@fam.test`,
+          password: "temporary-password-123",
+          staffNumber: token("SK"),
+          scopes: [
+            { role: "doctor", facilityId: scope.facility.id, branchId: null },
+            { role: "receptionist", facilityId: scope.facility.id, branchId: scope.branchId },
+          ],
+        }),
+        { database: ctx.db },
+      );
+
+      const rows = await listAdminStaff(ctx.db, scope.facility.id);
+      const forUser = rows.filter((row) => row.userId === created.userId);
+      expect(forUser).toHaveLength(2);
+      expect(forUser.every((row) => typeof row.id === "string" && row.id.length > 0)).toBe(true);
+      expect(new Set(forUser.map((row) => row.id)).size).toBe(forUser.length);
     });
   });
 
