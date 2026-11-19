@@ -56,3 +56,22 @@ Assets, assignments, depreciation entries, maintenance orders and disposal. Add 
 
 ### Prompt 17 — ERP reporting and controls
 Report catalogue, saved views, exports, approval dashboards and drill-down. Add financial statements, ageing, stock valuation and budget-variance reports.
+
+## Kenya readiness extensions
+
+The Kenyan requirements are specified in [10-kenya-facility-readiness.md](10-kenya-facility-readiness.md), with the full data model, commands, business rules, UI scope and acceptance criteria for each prompt. Run these one at a time, after the ERP prompts. Do not start them until V1 and the ERP prompts pass their full verification. Every unconfirmed regulator value listed in doc 10 §10 is an admin-editable, validated field with a safe default — build the field, never hard-code the answer, and never wait on one to start.
+
+### Prompt 18 — Kenya master data, licences and regulatory identifiers
+Facility regulatory profile (KMPDC number, KEPH level, licence category, county/sub-county, licence and indemnity expiry), practitioner registrations (annual practice licence, CPD), support-service licences (pharmacy, laboratory, imaging), facility identifiers (KRA PIN, NSSF, ODPC), licence alert rules, and a readiness guard used by billing, claims and reporting. Also the admin configuration surface where every unconfirmed regulator value in doc 10 §10 is entered, validated and versioned — nothing is hard-coded and no build waits on an answer.
+
+### Prompt 19 — Data protection (ODPC)
+Consent capture and withdrawal, data-subject requests with a clock, breach register with ODPC notification, retention policies, data-sharing agreements, cross-border transfer assessment for clinic→cloud, DPO role and privacy workspace, and per-record chart access audit.
+
+### Prompt 20 — MOH statutory reporting
+Report catalogue and generic run/cell store; generators for MOH 705A, 705B, 717, 505 (IDSR), 710A, 710B, 416 and 735 with the exact MOH envelope and arithmetic identities; IDSR immediate notifiable-event triggers; births and deaths notification registers; CSV/XLSX/PDF export, submission and void. Remaining forms follow in Prompt 20b.
+
+### Prompt 21 — eTIMS electronic tax invoicing
+Tax code master, eTIMS invoice envelope and durable queue, OSCU/VSCU adapters with sandbox and production targets, automatic enqueue on invoice finalisation, idempotent retry with backoff, credit notes instead of edits, and the KRA transactions screen.
+
+### Prompt 22 — SHA / SHIF revenue cycle
+Empanelment per fund, benefit packages and tariffs, SHA claim references and adjudication, pre-authorisation references, remittance allocation, denial rework, payment-report reconciliation to the general ledger, and waiver/exemption approval with separation of duties.

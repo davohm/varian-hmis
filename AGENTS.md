@@ -1,7 +1,7 @@
 # Varian HMIS — project instructions
 
 ## Documentation
-Read `docs/opencode-handover/README.md` first, then the numbered files `01`–`09` in order. Follow them exactly. The V1 build sequence is the 11 sequential prompts in `docs/opencode-handover/07-build-prompts.md`; run one prompt at a time. ERP extensions are specified in `docs/opencode-handover/09-erp-scope.md`.
+Read `docs/opencode-handover/README.md` first, then the numbered files `01`–`10` in order. Follow them exactly. The V1 build sequence is the 11 sequential prompts in `docs/opencode-handover/07-build-prompts.md`; run one prompt at a time. ERP extensions are specified in `docs/opencode-handover/09-erp-scope.md`. Kenyan regulatory requirements and build prompts 18–22 are in `docs/opencode-handover/10-kenya-facility-readiness.md`; every unconfirmed regulator value there is an admin-editable field with a safe default, never a hard-coded guess or a build blocker.
 
 ## Scope
 Varian HMIS is a clinical and ERP platform, not a clinical-only app. The ERP scope covers finance and revenue cycle, procurement and inventory, HR and payroll, assets and maintenance, and management reporting. Build ERP capabilities on the same facility-scoped, audited, idempotent, ledger-first architecture as the clinical modules.

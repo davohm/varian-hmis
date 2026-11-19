@@ -17,6 +17,7 @@ Specification for rebuilding Varian HMIS from scratch on:
 7. [07-build-prompts.md](07-build-prompts.md) — sequential prompts to paste into OpenCode
 8. [08-deployment.md](08-deployment.md) — cloud + mini-PC clinic deployment
 9. [09-erp-scope.md](09-erp-scope.md) — ERP domains, data model, phases and post-V1 build prompts
+10. [10-kenya-facility-readiness.md](10-kenya-facility-readiness.md) — Kenyan regulatory requirements (KMPDC, ODPC, SHA, KRA, MOH) and build prompts 18–22
 
 ## Non-negotiables
 - One write authority per facility (clinic server in local mode, cloud otherwise).
