@@ -3,6 +3,7 @@ export * from "./billing";
 export * from "./clinical";
 export * from "./finance";
 export * from "./patients";
+export * from "./regulatory";
 export * from "./revenue";
 export * from "./staff";
 export * from "./sync";

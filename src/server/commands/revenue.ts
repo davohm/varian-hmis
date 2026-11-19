@@ -31,6 +31,7 @@ import { tryPostJournal } from "@/server/ledger";
 import { nextFormattedNumber } from "@/server/numbering";
 
 import { actorSchema, runCommand, type CommandOptions, type CommandTransaction } from "./run";
+import { assertFacilityReady } from "./regulatory";
 
 const baseSchema = {
   facilityId: z.uuid(),
@@ -698,6 +699,11 @@ export async function createClaim(
 ): Promise<ClaimResult> {
   const values = createClaimSchema.parse(input);
   const userId = actorId(values);
+
+  await assertFacilityReady(
+    { facilityId: values.facilityId, action: "claiming", actor: values.actor },
+    options,
+  );
 
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },

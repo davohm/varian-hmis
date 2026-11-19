@@ -26,8 +26,13 @@ import {
   dispenses,
   encounters,
   facilities,
+  facilityIdentifiers,
+  facilityLicences,
+  facilityRegulatoryProfiles,
+  facilitySettings,
   facilitySyncTokens,
   fiscalPeriods,
+  integrationSettings,
   invoices,
   itemBatches,
   items,
@@ -38,6 +43,7 @@ import {
   labResults,
   labTests,
   ledgerAccounts,
+  licenceAlertRules,
   nextOfKin,
   numberSequences,
   patients,
@@ -45,6 +51,7 @@ import {
   payerContracts,
   payers,
   payments,
+  practitionerRegistrations,
   preAuthorizations,
   prescriptions,
   priceLists,
@@ -54,15 +61,21 @@ import {
   rooms,
   services,
   session,
+  shaAdjudicationCodes,
+  statutoryFeeSchedules,
+  statutoryRates,
   stockLedger,
   staffProfiles,
   staffRoleScopes,
   stores,
+  supportServiceLicences,
   syncOutbox,
   syncReceived,
   triageVitals,
   user,
 } from "../src/server/db/schema";
+
+import { seedRegulatoryDefaults } from "../src/server/regulatory-seed";
 
 export function createTestDatabase() {
   return createDatabase(DATABASE_URL);
@@ -81,6 +94,10 @@ export async function insertTestFacility(db: TestDatabase["db"]) {
     writeAuthority: "cloud",
     createdBy: "vitest",
   });
+
+  // Billing is gated on the seeded §6.6 settings (invoice prefix), exactly as
+  // a real install is, so every test facility gets the same defaults.
+  await seedRegulatoryDefaults(db, id, { createdBy: "vitest" });
 
   return { id, code };
 }
@@ -144,6 +161,9 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
       .from(staffRoleScopes)
       .where(eq(staffRoleScopes.facilityId, facilityId));
     const userIds = scopedUsers.map((row) => row.userId);
+    await tx
+      .delete(practitionerRegistrations)
+      .where(eq(practitionerRegistrations.facilityId, facilityId));
     await tx.delete(adminSectionPermissions).where(eq(adminSectionPermissions.facilityId, facilityId));
     await tx.delete(staffRoleScopes).where(eq(staffRoleScopes.facilityId, facilityId));
     if (userIds.length) {
@@ -205,6 +225,23 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
     await tx.delete(syncReceived).where(eq(syncReceived.facilityId, facilityId));
     await tx.delete(facilitySyncTokens).where(eq(facilitySyncTokens.facilityId, facilityId));
+    // Licence renewals reference the licence they replace.
+    await tx
+      .update(facilityLicences)
+      .set({ supersedesId: null })
+      .where(eq(facilityLicences.facilityId, facilityId));
+    await tx.delete(facilityLicences).where(eq(facilityLicences.facilityId, facilityId));
+    await tx.delete(facilityIdentifiers).where(eq(facilityIdentifiers.facilityId, facilityId));
+    await tx.delete(supportServiceLicences).where(eq(supportServiceLicences.facilityId, facilityId));
+    await tx.delete(licenceAlertRules).where(eq(licenceAlertRules.facilityId, facilityId));
+    await tx.delete(facilitySettings).where(eq(facilitySettings.facilityId, facilityId));
+    await tx.delete(statutoryRates).where(eq(statutoryRates.facilityId, facilityId));
+    await tx.delete(statutoryFeeSchedules).where(eq(statutoryFeeSchedules.facilityId, facilityId));
+    await tx.delete(shaAdjudicationCodes).where(eq(shaAdjudicationCodes.facilityId, facilityId));
+    await tx.delete(integrationSettings).where(eq(integrationSettings.facilityId, facilityId));
+    await tx
+      .delete(facilityRegulatoryProfiles)
+      .where(eq(facilityRegulatoryProfiles.facilityId, facilityId));
     await tx.delete(facilities).where(eq(facilities.id, facilityId));
   });
 }

@@ -9,10 +9,12 @@ import { recordAudit } from "../src/server/audit";
 import { APP_MODE, DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
 import { hashSyncToken } from "../src/server/sync/auth";
+import { seedRegulatoryDefaults } from "../src/server/regulatory-seed";
 import {
   account,
   branches,
   facilities,
+  facilityRegulatoryProfiles,
   icd10Codes,
   itemBatches,
   items,
@@ -693,6 +695,50 @@ async function upsertFacility(db: ReturnType<typeof createDatabase>["db"]) {
   return raced[0];
 }
 
+async function upsertRegulatoryProfile(
+  db: ReturnType<typeof createDatabase>["db"],
+  facilityId: string,
+) {
+  const existing = await db
+    .select({ facilityId: facilityRegulatoryProfiles.facilityId })
+    .from(facilityRegulatoryProfiles)
+    .where(eq(facilityRegulatoryProfiles.facilityId, facilityId))
+    .limit(1);
+  if (existing[0]) return { created: false };
+
+  await db.insert(facilityRegulatoryProfiles).values({
+    facilityId,
+    // Only confirmed values are seeded. Everything else stays null and is
+    // reported as `missing` for the administrator to fill in.
+    kmpdcNumber: null,
+    kmhflId: null,
+    kephLevel: null,
+    facilityCategory: "medical_centre",
+    ownership: null,
+    county: "Nairobi",
+    subCounty: null,
+    licenceNo: null,
+    licenceIssueDate: null,
+    licenceExpiryDate: null,
+    licenceStatus: "pending",
+    shaFacilityCode: null,
+    shaEmpanelmentStatus: null,
+    odpcRegistrationNo: null,
+    odpcCategory: null,
+    odpcExpiryDate: null,
+    kraPin: "P052292910Q",
+    tccNo: null,
+    tccExpiryDate: null,
+    nssfEmployerCode: null,
+    shifEmployerCode: null,
+    kemsaSupplierCode: null,
+    updatedBy: "seed",
+    createdBy: "seed",
+  });
+
+  return { created: true };
+}
+
 async function upsertBranch(db: ReturnType<typeof createDatabase>["db"], facilityId: string) {
   const existing = await db
     .select()
@@ -801,6 +847,8 @@ async function seed() {
     const facility = await upsertFacility(db);
     const branch = await upsertBranch(db, facility.id);
     const staff = await upsertStaff(db, facility.id, branch.id);
+    const regulatory = await upsertRegulatoryProfile(db, facility.id);
+    const settingsSeeded = await seedRegulatoryDefaults(db, facility.id);
 
     const syncToken = process.env.FACILITY_SYNC_TOKEN;
     const syncDeviceKey = process.env.FACILITY_DEVICE_KEY?.trim() || "clinic-server";
@@ -856,6 +904,7 @@ async function seed() {
           catalog: { icd10, labTests: labCatalog, drugs: drugCatalog },
           billing,
           pharmacyStock,
+          regulatory: { ...regulatory, settingsSeeded },
         },
         null,
         2,

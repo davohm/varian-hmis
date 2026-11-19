@@ -204,6 +204,23 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       icon: ScrollText,
     },
   ],
+  regulatory_officer: [
+    {
+      label: "Readiness",
+      description: "See which licences and identifiers are current.",
+      icon: ShieldCheck,
+    },
+    {
+      label: "Licences",
+      description: "Record facility, practitioner and service licences.",
+      icon: FileSignature,
+    },
+    {
+      label: "Statutory settings",
+      description: "Maintain the regulator values the facility depends on.",
+      icon: ScrollText,
+    },
+  ],
   admin: [
     {
       label: "Staff and roles",

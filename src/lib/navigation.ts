@@ -57,6 +57,11 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/finance",
     description: "Read the ledger, trial balance and audit trail.",
   },
+  regulatory_officer: {
+    label: "Regulatory",
+    href: "/admin/regulatory",
+    description: "Maintain licences, regulatory identifiers and readiness.",
+  },
   admin: {
     label: "Administration",
     href: "/admin",
@@ -79,6 +84,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   finance_officer: "Finance Officer",
   revenue_cycle_officer: "Revenue Cycle Officer",
   auditor: "Auditor",
+  regulatory_officer: "Regulatory Officer",
   admin: "Administrator",
 };
 
@@ -94,6 +100,7 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "finance_officer",
   "revenue_cycle_officer",
   "auditor",
+  "regulatory_officer",
   "admin",
 ];
 

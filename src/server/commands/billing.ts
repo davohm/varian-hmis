@@ -28,6 +28,7 @@ import { reverseJournalsForSource, tryPostJournal } from "@/server/ledger";
 import { nextFormattedNumber } from "@/server/numbering";
 
 import { actorSchema, runCommand, type CommandOptions, type CommandTransaction } from "./run";
+import { assertFacilityReady } from "./regulatory";
 
 const baseSchema = {
   facilityId: z.uuid(),
@@ -145,6 +146,11 @@ export async function openInvoice(
 ): Promise<OpenInvoiceResult> {
   const values = openInvoiceSchema.parse(input);
   const userId = actorId(values);
+
+  await assertFacilityReady(
+    { facilityId: values.facilityId, action: "billing", actor: values.actor },
+    options,
+  );
 
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },

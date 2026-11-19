@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { LoadingPanel } from "@/components/ui/loading-panel";
 import { cn } from "cn";
 
-type Row = { id: string; active?: boolean; isActive?: boolean };
+export type Row = { id: string; active?: boolean; isActive?: boolean };
 
 interface FacilityRow extends Row {
   code: string;
@@ -168,9 +168,9 @@ interface SyncMonitor {
   failedRows: FailedSyncRow[];
 }
 
-type FieldValue = string | boolean;
+export type FieldValue = string | boolean;
 
-interface Field {
+export interface Field {
   name: string;
   label: string;
   type?: "text" | "password" | "number" | "select" | "checkbox" | "textarea";
@@ -191,7 +191,7 @@ function statusLabel(active: boolean | undefined) {
   return active === false ? "Inactive" : "Active";
 }
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const data = (await response.json().catch(() => null)) as
     | { error?: string; detail?: string; issues?: Array<{ message?: string }>; result?: T }
@@ -202,7 +202,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-async function postCommand<T>(command: string, input: Record<string, unknown>): Promise<T> {
+export async function postCommand<T>(command: string, input: Record<string, unknown>): Promise<T> {
   const data = await requestJson<{ result: T }>("/api/admin/commands", {
     method: "POST",
     headers: { "content-type": "application/json", "x-device-id": "admin-station" },
@@ -242,7 +242,7 @@ function FieldInput({
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
         >
-          <option value="">Select…</option>
+          <option value="">Selectâ€¦</option>
           {field.options?.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -283,7 +283,7 @@ function FieldInput({
   );
 }
 
-function RecordForm({
+export function RecordForm({
   fields,
   initial,
   submitLabel,
@@ -331,7 +331,7 @@ function RecordForm({
   );
 }
 
-function DataTable<T extends Row>({
+export function DataTable<T extends Row>({
   rows,
   columns,
   testId,
@@ -378,7 +378,7 @@ function DataTable<T extends Row>({
   );
 }
 
-function Panel({
+export function Panel({
   title,
   description,
   testId,
@@ -428,7 +428,7 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
   const stores = overview.setup.stores;
 
   const branchOptions = useMemo(
-    () => branches.map((branch) => ({ value: branch.id, label: `${branch.code} — ${branch.name}` })),
+    () => branches.map((branch) => ({ value: branch.id, label: `${branch.code} â€” ${branch.name}` })),
     [branches],
   );
   const departmentOptions = useMemo(
@@ -436,7 +436,7 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
     [departments],
   );
   const facilityOptions = useMemo(
-    () => overview.facilities.map((facility) => ({ value: facility.id, label: `${facility.code} — ${facility.name}` })),
+    () => overview.facilities.map((facility) => ({ value: facility.id, label: `${facility.code} â€” ${facility.name}` })),
     [overview.facilities],
   );
 
@@ -531,7 +531,7 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
   async function submit(values: Record<string, FieldValue>) {
     const input = compact(values);
     const ok = await run(
-      "Saving…",
+      "Savingâ€¦",
       editing ? config.update : config.create,
       input,
       `${config.label} ${editing ? "updated" : "created"}.`,
@@ -545,7 +545,7 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
   const activeCommand = config.active;
   const toggleActive = useCallback(
     async (row: Row, active: boolean) => {
-      await run("Updating…", activeCommand, { id: row.id, active }, `${config.label} ${active ? "activated" : "deactivated"}.`);
+      await run("Updatingâ€¦", activeCommand, { id: row.id, active }, `${config.label} ${active ? "activated" : "deactivated"}.`);
     },
     [activeCommand, config.label, run],
   );
@@ -657,7 +657,7 @@ function AdminAccessPanel({ overview, busy, run }: PanelProps) {
   async function save() {
     if (!userId) return;
     await run(
-      "Saving access…",
+      "Saving accessâ€¦",
       "setAdminSectionAccess",
       { userId, sections },
       "Administration access updated.",
@@ -710,7 +710,7 @@ function AdminAccessPanel({ overview, busy, run }: PanelProps) {
           data-testid="admin-access-save"
           onClick={() => void save()}
         >
-          {busy === "Saving access…" ? "Saving…" : "Save access"}
+          {busy === "Saving accessâ€¦" ? "Savingâ€¦" : "Save access"}
         </Button>
       </div>
     </Panel>
@@ -719,7 +719,7 @@ function AdminAccessPanel({ overview, busy, run }: PanelProps) {
 
 function StaffPanel({ overview, busy, run }: PanelProps) {
   const facilityOptions = useMemo(
-    () => overview.facilities.map((facility) => ({ value: facility.id, label: `${facility.code} — ${facility.name}` })),
+    () => overview.facilities.map((facility) => ({ value: facility.id, label: `${facility.code} â€” ${facility.name}` })),
     [overview.facilities],
   );
   const branchOptions = useMemo(
@@ -754,7 +754,7 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
   async function create(values: Record<string, FieldValue>) {
     const { role, facilityId, branchId, ...rest } = values;
     const ok = await run(
-      "Creating…",
+      "Creatingâ€¦",
       "createStaff",
       {
         ...compact(rest),
@@ -767,12 +767,12 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
 
   async function update(values: Record<string, FieldValue>) {
     if (!editing) return;
-    const ok = await run("Saving…", "updateStaff", { userId: editing.userId, ...compact(values) }, "Staff details updated.");
+    const ok = await run("Savingâ€¦", "updateStaff", { userId: editing.userId, ...compact(values) }, "Staff details updated.");
     if (ok) { setEditing(null); setFormKey((key) => key + 1); }
   }
 
   async function changeRole(row: StaffRow, role: string) {
-    await run("Changing role…", "changeStaffRole", { userId: row.userId, role }, "Role changed.");
+    await run("Changing roleâ€¦", "changeStaffRole", { userId: row.userId, role }, "Role changed.");
   }
 
   const columns: Array<{ key: string; label: string; render: (row: StaffRow) => ReactNode }> = [
@@ -807,12 +807,12 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
             size="xs"
             variant="ghost"
             disabled={!row.isActive}
-            onClick={() => void run("Deactivating…", "setStaffActive", { userId: row.userId, active: false }, "Staff account deactivated.")}
+            onClick={() => void run("Deactivatingâ€¦", "setStaffActive", { userId: row.userId, active: false }, "Staff account deactivated.")}
           >
             Deactivate
           </Button>
           {!row.isActive ? (
-            <Button type="button" size="xs" variant="ghost" onClick={() => void run("Activating…", "setStaffActive", { userId: row.userId, active: true }, "Staff account activated.")}>
+            <Button type="button" size="xs" variant="ghost" onClick={() => void run("Activatingâ€¦", "setStaffActive", { userId: row.userId, active: true }, "Staff account activated.")}>
               Activate
             </Button>
           ) : null}
@@ -866,7 +866,7 @@ function CatalogsPanel({ overview, busy, run }: PanelProps) {
       { name: "shared", label: "", type: "checkbox", placeholder: "Shared across facilities" },
     ];
     if (!editing) common.unshift({ name: "code", label: "Code", required: true });
-    else common.unshift({ name: "id", label: "Record", type: "select", options: overview.catalogs[kind].map((row) => ({ value: row.id, label: `${row.code} — ${row.name}` })), required: true, disabled: true });
+    else common.unshift({ name: "id", label: "Record", type: "select", options: overview.catalogs[kind].map((row) => ({ value: row.id, label: `${row.code} â€” ${row.name}` })), required: true, disabled: true });
 
     if (kind === "items") {
       common.push(
@@ -910,7 +910,7 @@ function CatalogsPanel({ overview, busy, run }: PanelProps) {
         return;
       }
     }
-    const ok = await run("Saving…", editing ? config.update : config.create, input, `${config.label} ${editing ? "updated" : "created"}.`);
+    const ok = await run("Savingâ€¦", editing ? config.update : config.create, input, `${config.label} ${editing ? "updated" : "created"}.`);
     if (ok) { setEditing(null); setFormKey((key) => key + 1); }
   }
 
@@ -946,8 +946,8 @@ function CatalogsPanel({ overview, busy, run }: PanelProps) {
       render: (row) => (
         <div className="flex gap-1">
           <Button type="button" size="xs" variant="outline" onClick={() => { setEditing(row); setFormKey((key) => key + 1); }}>Edit</Button>
-          <Button type="button" size="xs" variant="ghost" disabled={!row.active} onClick={() => void run("Updating…", config.active, { id: row.id, active: false }, `${config.label} deactivated.`)}>Deactivate</Button>
-          {!row.active ? <Button type="button" size="xs" variant="ghost" onClick={() => void run("Updating…", config.active, { id: row.id, active: true }, `${config.label} activated.`)}>Activate</Button> : null}
+          <Button type="button" size="xs" variant="ghost" disabled={!row.active} onClick={() => void run("Updatingâ€¦", config.active, { id: row.id, active: false }, `${config.label} deactivated.`)}>Deactivate</Button>
+          {!row.active ? <Button type="button" size="xs" variant="ghost" onClick={() => void run("Updatingâ€¦", config.active, { id: row.id, active: true }, `${config.label} activated.`)}>Activate</Button> : null}
         </div>
       ),
     },
@@ -983,7 +983,7 @@ function CatalogsPanel({ overview, busy, run }: PanelProps) {
         <div className="space-y-3">
           <Label htmlFor="admin-icd-rows">ICD-10 CSV rows</Label>
           <textarea id="admin-icd-rows" data-testid="admin-icd-rows" className="min-h-24 w-full rounded-lg border border-input bg-transparent p-2 font-mono text-xs dark:bg-input/30" value={icdRows} onChange={(event) => setIcdRows(event.target.value)} />
-          <Button type="button" size="sm" disabled={importBusy} data-testid="admin-icd-import" onClick={() => void importIcd()}>{importBusy ? "Importing…" : "Import ICD-10 rows"}</Button>
+          <Button type="button" size="sm" disabled={importBusy} data-testid="admin-icd-import" onClick={() => void importIcd()}>{importBusy ? "Importingâ€¦" : "Import ICD-10 rows"}</Button>
         </div>
       </Panel>
     </div>
@@ -995,12 +995,12 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
   const [listKey, setListKey] = useState(0);
 
   const targetOptions = useMemo(() => {
-    const services = overview.catalogs.services.map((service) => ({ value: service.id, label: `Service · ${service.code} — ${service.name}` }));
-    const items = overview.catalogs.items.map((item) => ({ value: item.id, label: `Item · ${item.code} — ${item.name}` }));
+    const services = overview.catalogs.services.map((service) => ({ value: service.id, label: `Service Â· ${service.code} â€” ${service.name}` }));
+    const items = overview.catalogs.items.map((item) => ({ value: item.id, label: `Item Â· ${item.code} â€” ${item.name}` }));
     return [...services, ...items];
   }, [overview.catalogs.items, overview.catalogs.services]);
   const priceListOptions = useMemo(
-    () => overview.priceLists.map((list) => ({ value: list.id, label: `${list.payerType} — ${list.name}` })),
+    () => overview.priceLists.map((list) => ({ value: list.id, label: `${list.payerType} â€” ${list.name}` })),
     [overview.priceLists],
   );
 
@@ -1028,8 +1028,8 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
       render: (row) => (
         <div className="flex gap-1">
           <Button type="button" size="xs" variant="outline" onClick={() => { setEditingList(row); setListKey((key) => key + 1); }}>Edit</Button>
-          <Button type="button" size="xs" variant="ghost" disabled={!row.active} onClick={() => void run("Updating…", "setPriceListActive", { id: row.id, active: false }, "Price list deactivated.")}>Deactivate</Button>
-          {!row.active ? <Button type="button" size="xs" variant="ghost" onClick={() => void run("Updating…", "setPriceListActive", { id: row.id, active: true }, "Price list activated.")}>Activate</Button> : null}
+          <Button type="button" size="xs" variant="ghost" disabled={!row.active} onClick={() => void run("Updatingâ€¦", "setPriceListActive", { id: row.id, active: false }, "Price list deactivated.")}>Deactivate</Button>
+          {!row.active ? <Button type="button" size="xs" variant="ghost" onClick={() => void run("Updatingâ€¦", "setPriceListActive", { id: row.id, active: true }, "Price list activated.")}>Activate</Button> : null}
         </div>
       ),
     },
@@ -1051,7 +1051,7 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
           variant="ghost"
           disabled={busy !== null}
           data-testid={`admin-price-remove-${row.id}`}
-          onClick={() => void run("Voiding…", "removePrice", { id: row.id }, "Price voided; the row remains in history.")}
+          onClick={() => void run("Voidingâ€¦", "removePrice", { id: row.id }, "Price voided; the row remains in history.")}
         >
           Void price
         </Button>
@@ -1076,7 +1076,7 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
             busy={busy}
             testId="admin-price-list-form"
             onSubmit={(values) => void (async () => {
-              const ok = await run("Saving…", editingList ? "updatePriceList" : "createPriceList", { ...compact(values), ...(editingList ? { id: editingList.id } : {}) }, `Price list ${editingList ? "updated" : "created"}.`);
+              const ok = await run("Savingâ€¦", editingList ? "updatePriceList" : "createPriceList", { ...compact(values), ...(editingList ? { id: editingList.id } : {}) }, `Price list ${editingList ? "updated" : "created"}.`);
               if (ok) { setEditingList(null); setListKey((key) => key + 1); }
             })()}
             onCancel={editingList ? () => { setEditingList(null); setListKey((key) => key + 1); } : undefined}
@@ -1104,7 +1104,7 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
             submitLabel="Save price"
             busy={busy}
             testId="admin-price-form"
-            onSubmit={(values) => void run("Saving…", "upsertPrice", compact(values), "Price saved.")}
+            onSubmit={(values) => void run("Savingâ€¦", "upsertPrice", compact(values), "Price saved.")}
           />
         </Panel>
       </div>
@@ -1148,9 +1148,9 @@ function AuditPanel() {
   const columns: Array<{ key: string; label: string; render: (row: AuditEvent) => ReactNode }> = [
     { key: "when", label: "When", render: (row) => <span className="font-mono text-xs">{new Date(row.created_at).toLocaleString("en-KE")}</span> },
     { key: "action", label: "Action", render: (row) => <span className="font-medium">{row.action}</span> },
-    { key: "entity", label: "Entity", render: (row) => `${row.module} · ${row.entity}` },
-    { key: "entityId", label: "Entity ID", render: (row) => <span className="font-mono text-[11px]">{row.entity_id ?? "—"}</span> },
-    { key: "user", label: "User", render: (row) => row.user_id ?? "—" },
+    { key: "entity", label: "Entity", render: (row) => `${row.module} Â· ${row.entity}` },
+    { key: "entityId", label: "Entity ID", render: (row) => <span className="font-mono text-[11px]">{row.entity_id ?? "â€”"}</span> },
+    { key: "user", label: "User", render: (row) => row.user_id ?? "â€”" },
     { key: "details", label: "Details", render: (row) => <code className="text-[11px]">{JSON.stringify(row.details)}</code> },
   ];
 
@@ -1161,14 +1161,14 @@ function AuditPanel() {
           key={formKey}
           fields={auditFilterFields}
           initial={values}
-          submitLabel={loading ? "Loading…" : "Apply filters"}
+          submitLabel={loading ? "Loadingâ€¦" : "Apply filters"}
           testId="admin-audit-filter"
           onSubmit={(next) => { setValues(next); void load(next); }}
           onCancel={() => { const reset = { limit: "100" }; setValues(reset); setFormKey((key) => key + 1); void load(reset); }}
         />
       </Panel>
       <Panel title="Audit events" description="Newest first, limited to the selected facility." testId="admin-audit-results">
-        <DataTable rows={events} columns={columns} testId="admin-audit-rows" empty={loading ? "Loading audit events…" : "No audit events match these filters."} />
+        <DataTable rows={events} columns={columns} testId="admin-audit-rows" empty={loading ? "Loading audit eventsâ€¦" : "No audit events match these filters."} />
       </Panel>
     </div>
   );
@@ -1231,7 +1231,7 @@ function SyncPanel() {
     { key: "record", label: "Record", render: (row) => <><span className="font-medium">{row.tableName}</span><br /><code className="text-[11px]">{row.recordId}</code></> },
     { key: "operation", label: "Operation", render: (row) => row.operation },
     { key: "attempts", label: "Attempts", render: (row) => <span className="tabular-nums">{row.attempts}</span> },
-    { key: "error", label: "Last error", render: (row) => <span className="text-xs text-[var(--status-critical)]">{row.lastError ?? "—"}</span> },
+    { key: "error", label: "Last error", render: (row) => <span className="text-xs text-[var(--status-critical)]">{row.lastError ?? "â€”"}</span> },
     { key: "payload", label: "Payload", render: (row) => <code className="block max-w-xs truncate text-[11px]">{row.payloadPreview}</code> },
     {
       key: "actions",
@@ -1245,7 +1245,7 @@ function SyncPanel() {
           data-testid={`admin-sync-retry-${row.outboxId}`}
           onClick={() => void retry([row.outboxId], row.outboxId)}
         >
-          {busyId === row.outboxId ? "Retrying…" : "Retry"}
+          {busyId === row.outboxId ? "Retryingâ€¦" : "Retry"}
         </Button>
       ),
     },
@@ -1269,10 +1269,10 @@ function SyncPanel() {
         testId="admin-sync-status-panel"
       >
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {metric("Mode", status?.appMode ?? "—", "admin-sync-mode-metric")}
+          {metric("Mode", status?.appMode ?? "â€”", "admin-sync-mode-metric")}
           {metric("Pending", String(status?.pendingCount ?? 0), "admin-sync-pending-metric")}
           {metric("Failed", String(status?.failedCount ?? 0), "admin-sync-failed-metric")}
-          {metric("Oldest pending", oldestHours === null ? "—" : `${oldestHours}h`, "admin-sync-oldest-metric")}
+          {metric("Oldest pending", oldestHours === null ? "â€”" : `${oldestHours}h`, "admin-sync-oldest-metric")}
         </div>
         <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-3">
           <p data-testid="admin-sync-last-success">
@@ -1301,14 +1301,14 @@ function SyncPanel() {
             data-testid="admin-sync-retry-all"
             onClick={() => void retry([], "all")}
           >
-            {busyId === "all" ? "Retrying…" : "Retry all"}
+            {busyId === "all" ? "Retryingâ€¦" : "Retry all"}
           </Button>
         </div>
         <DataTable
           rows={(monitor?.failedRows ?? []).map((row) => ({ ...row, id: row.outboxId }))}
           columns={columns}
           testId="admin-sync-failed-rows"
-          empty={loading ? "Loading sync rows…" : "No failed rows."}
+          empty={loading ? "Loading sync rowsâ€¦" : "No failed rows."}
         />
       </Panel>
     </div>
@@ -1353,7 +1353,7 @@ export function AdminWorkspace({ section }: { section: AdminSection }) {
   }, [load]);
 
   async function switchFacility(facilityId: string) {
-    setBusy("Switching…");
+    setBusy("Switchingâ€¦");
     try {
       const response = await fetch("/api/session/activate", {
         method: "POST",
@@ -1385,7 +1385,7 @@ export function AdminWorkspace({ section }: { section: AdminSection }) {
     return (
       <LoadingPanel
         label="Loading administration data"
-        title="Loading administration data…"
+        title="Loading administration dataâ€¦"
         rows={4}
         data-testid="admin-loading"
       />
@@ -1407,7 +1407,7 @@ export function AdminWorkspace({ section }: { section: AdminSection }) {
             onChange={(event) => void switchFacility(event.target.value)}
           >
             {overview.facilities.map((facility) => (
-              <option key={facility.id} value={facility.id}>{facility.code} — {facility.name}</option>
+              <option key={facility.id} value={facility.id}>{facility.code} â€” {facility.name}</option>
             ))}
           </select>
         </div>

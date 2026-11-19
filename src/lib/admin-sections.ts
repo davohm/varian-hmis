@@ -5,6 +5,7 @@ export const ADMIN_SECTIONS = [
   "prices",
   "audit",
   "sync",
+  "regulatory",
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
@@ -46,6 +47,11 @@ export const ADMIN_SECTION_META: Record<AdminSection, AdminSectionMeta> = {
     description: "Outbox health, failed rows and retry controls.",
     href: "/admin/sync",
   },
+  regulatory: {
+    label: "Regulatory",
+    description: "Licences, regulatory identifiers, readiness and statutory settings.",
+    href: "/admin/regulatory",
+  },
 };
 
 /** Every mutation command belongs to exactly one administration section. */
@@ -85,6 +91,19 @@ export const ADMIN_COMMAND_SECTIONS: Record<string, AdminSection> = {
   setPriceListActive: "prices",
   upsertPrice: "prices",
   removePrice: "prices",
+  upsertFacilityRegulatoryProfile: "regulatory",
+  updateFacilityLicence: "regulatory",
+  upsertPractitionerRegistration: "regulatory",
+  verifyPractitionerLicence: "regulatory",
+  upsertSupportServiceLicence: "regulatory",
+  createLicenceAlertRule: "regulatory",
+  upsertFacilitySetting: "regulatory",
+  upsertStatutoryRate: "regulatory",
+  upsertStatutoryFeeSchedule: "regulatory",
+  upsertShaAdjudicationCode: "regulatory",
+  upsertIntegrationSetting: "regulatory",
+  verifyIntegrationConnection: "regulatory",
+  upsertFacilityIdentifier: "regulatory",
 };
 
 export function isAdminSection(value: string): value is AdminSection {

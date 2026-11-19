@@ -29,6 +29,23 @@ export async function requireAdminSection(section: AdminSection) {
   return context;
 }
 
+/** Regulatory officers reach only `/admin/regulatory`; administrators keep everything. */
+export async function requireRegulatoryAccess() {
+  const context = await requireApiFacility(["admin", "regulatory_officer"]);
+  const isAdmin = context.staff.scopes.some(
+    (scope) => scope.facilityId === context.facilityId && scope.role === "admin",
+  );
+  const sections = isAdmin
+    ? await getAdminSections(context.staff.user.id, context.facilityId)
+    : (["regulatory"] as AdminSection[]);
+  if (!sections.includes("regulatory")) {
+    throw new ForbiddenError("You do not have access to the regulatory section.");
+  }
+  return { ...context, sections };
+}
+
+type AdminAccessContext = Awaited<ReturnType<typeof requireAdminAccess>>;
+
 type AdminCommand = (input: Record<string, unknown>) => Promise<unknown>;
 
 const commandRequestSchema = z.object({
@@ -40,9 +57,10 @@ const commandRequestSchema = z.object({
 export async function handleAdminCommand(
   request: NextRequest,
   commands: Record<string, AdminCommand>,
+  resolveAccess: () => Promise<AdminAccessContext> = requireAdminAccess,
 ) {
   try {
-    const context = await requireAdminAccess();
+    const context = await resolveAccess();
     const { facilityId, staff, sections } = context;
     const body = commandRequestSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {

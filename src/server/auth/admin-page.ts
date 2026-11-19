@@ -7,8 +7,13 @@ import { requireScreen } from "./guards";
 
 /** Page-level guard for a deep-linked administration section. */
 export async function requireAdminPage(section: AdminSection) {
-  const staff = await requireScreen(["admin"]);
-  const sections = await getAdminSections(staff.user.id, staff.facilityId);
+  const roles = section === "regulatory" ? (["admin", "regulatory_officer"] as const) : (["admin"] as const);
+  const staff = await requireScreen([...roles]);
+  const isAdmin = staff.scopes.some(
+    (scope) => scope.facilityId === staff.facilityId && scope.role === "admin",
+  );
+  const granted = await getAdminSections(staff.user.id, staff.facilityId);
+  const sections = isAdmin ? granted : granted.filter((grant) => grant === "regulatory");
   if (!sections.includes(section)) redirect("/forbidden");
   return { staff, sections };
 }
