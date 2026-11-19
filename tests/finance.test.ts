@@ -36,6 +36,7 @@ import {
 import { encounters, invoices, patients, remittances } from "../src/server/db/schema";
 import {
   getFinanceOverview,
+  getFinancialStatements,
   getGeneralLedger,
   getJournal,
   getTrialBalance,
@@ -873,6 +874,156 @@ describe("general ledger", () => {
       expect(march?.openingBalance).toBe("100.00");
       expect(march?.rows).toHaveLength(1);
       expect(march?.closingBalance).toBe("350.00");
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Financial statements                                                */
+/* ------------------------------------------------------------------ */
+
+describe("financial statements", () => {
+  it("derives the balance sheet, income statement and cash flow from posted journals", async () => {
+    await withFinanceFacility(async ({ facility, accounts }) => {
+      await postSimpleJournal(
+        facility.id,
+        accounts.cash,
+        accounts.service_revenue,
+        "2000.00",
+        ENTRY_DATE,
+      );
+      await postSimpleJournal(
+        facility.id,
+        accounts["5000"],
+        accounts.cash,
+        "300.00",
+        ENTRY_DATE,
+      );
+
+      const statements = await getFinancialStatements(ctx.db, facility.id, {
+        from: "2026-03-01",
+        to: "2026-03-31",
+      });
+
+      expect(statements.incomeStatement.totalRevenue).toBe("2000.00");
+      expect(statements.incomeStatement.totalExpenses).toBe("300.00");
+      expect(statements.incomeStatement.netIncome).toBe("1700.00");
+      expect(statements.incomeStatement.revenue.lines[0].code).toBe("4000");
+
+      expect(statements.balanceSheet.totalAssets).toBe("1700.00");
+      expect(statements.balanceSheet.totalLiabilities).toBe("0.00");
+      expect(statements.balanceSheet.accumulatedSurplus).toBe("1700.00");
+      expect(statements.balanceSheet.totalLiabilitiesAndEquity).toBe("1700.00");
+      expect(statements.balanceSheet.balanced).toBe(true);
+
+      const operating = statements.cashFlow.sections.find((section) => section.key === "operating");
+      expect(operating?.receipts).toBe("2000.00");
+      expect(operating?.payments).toBe("300.00");
+      expect(statements.cashFlow.openingCash).toBe("0.00");
+      expect(statements.cashFlow.netCashFlow).toBe("1700.00");
+      expect(statements.cashFlow.closingCash).toBe("1700.00");
+      expect(statements.cashFlow.ledgerCash).toBe("1700.00");
+      expect(statements.cashFlow.balanced).toBe(true);
+      expect(statements.cashFlow.sections.every((section) => section.key === "operating" || section.lines.length === 0)).toBe(true);
+    });
+  });
+
+  it("applies date, period, branch and cost-centre filters", async () => {
+    await withFinanceFacility(async ({ facility, accounts, branchId, costCenterId }) => {
+      const operations = await createCostCenter(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: ACTOR,
+          code: "OPS",
+          name: "Operations",
+          branchId,
+        },
+        { database: ctx.db },
+      );
+
+      async function postTaggedJournal(
+        debitAccountId: string,
+        creditAccountId: string,
+        amount: string,
+        entryDate: string,
+        centerId: string,
+      ) {
+        return postManualJournal(
+          {
+            facilityId: facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: ACTOR,
+            entryDate,
+            description: `Tagged journal ${entryDate}`,
+            lines: [
+              {
+                accountId: debitAccountId,
+                debit: amount,
+                credit: 0,
+                costCenterId: centerId,
+              },
+              {
+                accountId: creditAccountId,
+                debit: 0,
+                credit: amount,
+                costCenterId: centerId,
+              },
+            ],
+          },
+          { database: ctx.db },
+        );
+      }
+
+      await postTaggedJournal(
+        accounts.cash,
+        accounts.service_revenue,
+        "100.00",
+        "2026-03-15",
+        costCenterId,
+      );
+      await postTaggedJournal(
+        accounts.cash,
+        accounts.service_revenue,
+        "250.00",
+        "2026-04-15",
+        operations.costCenterId,
+      );
+
+      const march = await getFinancialStatements(ctx.db, facility.id, {
+        from: "2026-03-01",
+        to: "2026-03-31",
+      });
+      expect(march.incomeStatement.totalRevenue).toBe("100.00");
+
+      const april = await getFinancialStatements(ctx.db, facility.id, {
+        from: "2026-04-01",
+        to: "2026-04-30",
+      });
+      expect(april.incomeStatement.totalRevenue).toBe("250.00");
+
+      const byCostCenter = await getFinancialStatements(ctx.db, facility.id, {
+        from: "2026-01-01",
+        to: "2026-12-31",
+        costCenterId: operations.costCenterId,
+      });
+      expect(byCostCenter.incomeStatement.totalRevenue).toBe("250.00");
+      expect(byCostCenter.filters.dimensionLabel).toContain("OPS");
+
+      const byBranch = await getFinancialStatements(ctx.db, facility.id, {
+        from: "2026-01-01",
+        to: "2026-12-31",
+        branchId,
+      });
+      expect(byBranch.incomeStatement.totalRevenue).toBe("350.00");
+
+      const [period] = await listFiscalPeriods(ctx.db, facility.id);
+      const byPeriod = await getFinancialStatements(ctx.db, facility.id, {
+        periodId: period.id,
+      });
+      expect(byPeriod.filters.from).toBe(period.startDate);
+      expect(byPeriod.filters.to).toBe(period.endDate);
+      expect(byPeriod.incomeStatement.totalRevenue).toBe("350.00");
     });
   });
 });

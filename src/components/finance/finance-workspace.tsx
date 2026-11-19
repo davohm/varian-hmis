@@ -9,6 +9,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -236,9 +237,21 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
           <RefreshCw className="size-4" aria-hidden="true" />
           Refresh
         </button>
-        <p className="ml-auto text-xs text-muted-foreground">
-          Dates filter journals, trial balance and the general ledger.
-        </p>
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-xs">
+          <Link
+            href="/finance/statements"
+            className="font-medium text-primary underline"
+            data-testid="finance-link-statements"
+          >
+            Financial statements
+          </Link>
+          <Link href="/finance/revenue" className="font-medium text-primary underline">
+            Revenue cycle
+          </Link>
+          <span className="text-muted-foreground">
+            Dates filter journals, trial balance and the general ledger.
+          </span>
+        </div>
       </div>
 
       <div role="tablist" aria-label="Finance sections" className="flex flex-wrap gap-1 border-b border-border">
