@@ -21,6 +21,8 @@ const WORKSPACES = [
   { email: "lab@fam.test", path: "/lab", testId: "screen-lab" },
   { email: "pharmacist@fam.test", path: "/pharmacy", testId: "screen-pharmacy" },
   { email: "cashier@fam.test", path: "/cashier", testId: "screen-cashier" },
+  { email: "accountant@fam.test", path: "/finance", testId: "screen-finance" },
+  { email: "auditor@fam.test", path: "/finance", testId: "screen-finance" },
   { email: "admin@fam.test", path: "/admin", testId: "screen-admin" },
 ] as const;
 
@@ -80,6 +82,8 @@ const API_ROUTES: Array<[method: "GET" | "POST", path: string]> = [
   ["POST", "/api/admin/commands"],
   ["GET", "/api/admin/sync"],
   ["POST", "/api/admin/sync"],
+  ["GET", "/api/finance"],
+  ["POST", "/api/finance"],
   ["GET", "/api/health"],
   ["POST", "/api/sync/batch"],
   ["GET", "/api/sync/pull"],

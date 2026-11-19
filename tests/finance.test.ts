@@ -36,6 +36,7 @@ import {
 import { encounters, invoices, patients, remittances } from "../src/server/db/schema";
 import {
   getFinanceOverview,
+  getGeneralLedger,
   getJournal,
   getTrialBalance,
   listFiscalPeriods,
@@ -818,6 +819,41 @@ describe("revenue cycle", () => {
       const accounts = await listLedgerAccounts(ctx.db, facility.id);
       expect(accounts.length).toBe(DEFAULT_CHART_OF_ACCOUNTS.length);
       expect(accounts.some((account) => account.systemRole === "patient_receivable")).toBe(true);
+    });
+  });
+});
+
+describe("general ledger", () => {
+  it("reports chronological activity with running balances and date filters", async () => {
+    await withFinanceFacility(async ({ facility, accounts }) => {
+      await postSimpleJournal(
+        facility.id,
+        accounts.cash,
+        accounts.service_revenue,
+        "100.00",
+        "2026-03-10",
+      );
+      await postSimpleJournal(
+        facility.id,
+        accounts.cash,
+        accounts.service_revenue,
+        "250.00",
+        "2026-03-15",
+      );
+
+      const ledger = await getGeneralLedger(ctx.db, facility.id, accounts.cash);
+      expect(ledger?.account.code).toBe("1000");
+      expect(ledger?.rows).toHaveLength(2);
+      expect(ledger?.openingBalance).toBe("0.00");
+      expect(ledger?.rows.map((row) => row.runningBalance)).toEqual(["100.00", "350.00"]);
+      expect(ledger?.closingBalance).toBe("350.00");
+
+      const march = await getGeneralLedger(ctx.db, facility.id, accounts.cash, {
+        from: "2026-03-15",
+      });
+      expect(march?.openingBalance).toBe("100.00");
+      expect(march?.rows).toHaveLength(1);
+      expect(march?.closingBalance).toBe("350.00");
     });
   });
 });

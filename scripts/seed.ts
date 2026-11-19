@@ -4,6 +4,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { fromCents, toCents } from "../src/lib/billing";
+import {
+  DEFAULT_CHART_OF_ACCOUNTS,
+  DEFAULT_COST_CENTER,
+  normalBalanceFor,
+} from "../src/lib/finance";
 import { newId } from "../src/lib/uuid";
 import { recordAudit } from "../src/server/audit";
 import { APP_MODE, DATABASE_URL } from "../src/server/env";
@@ -15,10 +20,12 @@ import {
   branches,
   facilities,
   facilityRegulatoryProfiles,
+  costCenters,
   icd10Codes,
   itemBatches,
   items,
   labTests,
+  ledgerAccounts,
   priceLists,
   prices,
   services,
@@ -45,6 +52,10 @@ const STAFF_SEEDS: Array<{ role: Role; name: string; email: string; staffNumber:
   { role: "lab_tech", name: "Laboratory Technician", email: "lab@fam.test", staffNumber: "FAM-L001" },
   { role: "pharmacist", name: "Pharmacist", email: "pharmacist@fam.test", staffNumber: "FAM-P001" },
   { role: "cashier", name: "Cashier", email: "cashier@fam.test", staffNumber: "FAM-C001" },
+  { role: "accountant", name: "Accountant", email: "accountant@fam.test", staffNumber: "FAM-F001" },
+  { role: "finance_officer", name: "Finance Officer", email: "finance@fam.test", staffNumber: "FAM-F002" },
+  { role: "revenue_cycle_officer", name: "Revenue Cycle Officer", email: "revenue@fam.test", staffNumber: "FAM-F003" },
+  { role: "auditor", name: "Auditor", email: "auditor@fam.test", staffNumber: "FAM-F004" },
   { role: "admin", name: "System Administrator", email: "admin@fam.test", staffNumber: "FAM-A001" },
 ];
 
@@ -771,6 +782,51 @@ async function upsertBranch(db: ReturnType<typeof createDatabase>["db"], facilit
   return raced[0];
 }
 
+/**
+ * Seed the default chart so billing, claims and the finance workspace have the
+ * system accounts they resolve at posting time. Idempotent: an existing chart
+ * is never overwritten.
+ */
+async function upsertChartOfAccounts(
+  db: ReturnType<typeof createDatabase>["db"],
+  facilityId: string,
+  branchId: string,
+) {
+  let accounts = 0;
+  for (const account of DEFAULT_CHART_OF_ACCOUNTS) {
+    const inserted = await db
+      .insert(ledgerAccounts)
+      .values({
+        id: newId(),
+        facilityId,
+        code: account.code,
+        name: account.name,
+        type: account.type,
+        normalBalance: normalBalanceFor(account.type),
+        systemRole: account.systemRole,
+        createdBy: "seed",
+      })
+      .onConflictDoNothing({ target: [ledgerAccounts.facilityId, ledgerAccounts.code] })
+      .returning({ id: ledgerAccounts.id });
+    accounts += inserted.length;
+  }
+
+  const centers = await db
+    .insert(costCenters)
+    .values({
+      id: newId(),
+      facilityId,
+      branchId,
+      code: DEFAULT_COST_CENTER.code,
+      name: DEFAULT_COST_CENTER.name,
+      createdBy: "seed",
+    })
+    .onConflictDoNothing({ target: [costCenters.facilityId, costCenters.code] })
+    .returning({ id: costCenters.id });
+
+  return { accounts, costCenters: centers.length };
+}
+
 async function upsertStaff(
   db: ReturnType<typeof createDatabase>["db"],
   facilityId: string,
@@ -846,6 +902,7 @@ async function seed() {
   try {
     const facility = await upsertFacility(db);
     const branch = await upsertBranch(db, facility.id);
+    const chart = await upsertChartOfAccounts(db, facility.id, branch.id);
     const staff = await upsertStaff(db, facility.id, branch.id);
     const regulatory = await upsertRegulatoryProfile(db, facility.id);
     const settingsSeeded = await seedRegulatoryDefaults(db, facility.id);
@@ -901,6 +958,7 @@ async function seed() {
           branch: { id: branch.id, code: branch.code, name: branch.name },
           stores: allStores.map(({ id, name, kind }) => ({ id, name, kind })),
           staff: { count: staff.count, password: staff.password },
+          chartOfAccounts: chart,
           catalog: { icd10, labTests: labCatalog, drugs: drugCatalog },
           billing,
           pharmacyStock,

@@ -21,6 +21,8 @@ import {
 } from "@/server/commands/finance";
 import {
   getFinanceOverview,
+  getGeneralLedger,
+  getTrialBalance,
   listBankAccounts,
   listBankReconciliations,
   listBankTransactions,
@@ -57,6 +59,7 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const from = url.searchParams.get("from") ?? undefined;
     const to = url.searchParams.get("to") ?? undefined;
+    const accountId = url.searchParams.get("accountId") ?? undefined;
 
     const [
       overview,
@@ -67,6 +70,8 @@ export async function GET(request: NextRequest) {
       bankAccounts,
       bankTransactions,
       reconciliations,
+      trialBalance,
+      generalLedger,
     ] = await Promise.all([
       getFinanceOverview(db, facilityId).catch(() => null),
       listLedgerAccounts(db, facilityId),
@@ -76,6 +81,8 @@ export async function GET(request: NextRequest) {
       listBankAccounts(db, facilityId),
       listBankTransactions(db, facilityId),
       listBankReconciliations(db, facilityId),
+      getTrialBalance(db, facilityId, { from, to }),
+      accountId ? getGeneralLedger(db, facilityId, accountId, { from, to }) : Promise.resolve(null),
     ]);
 
     return NextResponse.json({
@@ -87,6 +94,8 @@ export async function GET(request: NextRequest) {
       bankAccounts,
       bankTransactions,
       reconciliations,
+      trialBalance,
+      generalLedger,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
