@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  Banknote,
   ClipboardList,
   FlaskConical,
   HeartPulse,
+  Landmark,
   Pill,
   Receipt,
   ShieldCheck,
@@ -25,6 +27,10 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   lab_tech: FlaskConical,
   pharmacist: Pill,
   cashier: Receipt,
+  accountant: Landmark,
+  finance_officer: Banknote,
+  revenue_cycle_officer: Receipt,
+  auditor: ShieldCheck,
   admin: ShieldCheck,
 };
 

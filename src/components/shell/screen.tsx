@@ -10,6 +10,11 @@ import {
   FileText,
   FlaskConical,
   HeartPulse,
+  Landmark,
+  BookOpen,
+  Scale,
+  Wallet,
+  FileSignature,
   Package,
   Pill,
   Receipt,
@@ -129,6 +134,74 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       label: "Receipts",
       description: "Issue immutable sequential receipts.",
       icon: FileText,
+    },
+  ],
+  accountant: [
+    {
+      label: "General ledger",
+      description: "Post balanced journals and prove the ledger.",
+      icon: BookOpen,
+    },
+    {
+      label: "Trial balance",
+      description: "Check debits equal credits before you close.",
+      icon: Scale,
+    },
+    {
+      label: "Period close",
+      description: "Close fiscal periods with an audited trail.",
+      icon: ClipboardCheck,
+    },
+  ],
+  finance_officer: [
+    {
+      label: "Banking",
+      description: "Manage bank accounts and reconciliations.",
+      icon: Landmark,
+    },
+    {
+      label: "Cash position",
+      description: "See cash, bank and receivables at a glance.",
+      icon: Wallet,
+    },
+    {
+      label: "Revenue cycle",
+      description: "Track payers, claims and remittances.",
+      icon: Receipt,
+    },
+  ],
+  revenue_cycle_officer: [
+    {
+      label: "Payers and contracts",
+      description: "Maintain schemes, contracts and benefits.",
+      icon: FileSignature,
+    },
+    {
+      label: "Pre-authorisation",
+      description: "Request, approve and track guarantees.",
+      icon: ClipboardCheck,
+    },
+    {
+      label: "Claims",
+      description: "Submit, rework and settle claims.",
+      icon: Receipt,
+    },
+  ],
+  auditor: [
+    {
+      label: "Ledger review",
+      description: "Read posted journals and their source records.",
+      icon: BookOpen,
+    },
+    {
+      label: "Trial balance",
+      description: "Confirm the ledger balances without editing.",
+      icon: Scale,
+    },
+    {
+      label: "Audit trail",
+      description: "Trace every financial write to its actor.",
+      icon: ScrollText,
     },
   ],
   admin: [

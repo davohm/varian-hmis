@@ -37,6 +37,26 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/cashier",
     description: "Bill visits and record payments.",
   },
+  accountant: {
+    label: "Finance",
+    href: "/finance",
+    description: "Post journals, close periods and prove the ledger.",
+  },
+  finance_officer: {
+    label: "Finance",
+    href: "/finance",
+    description: "Manage bank accounts, reconciliations and revenue.",
+  },
+  revenue_cycle_officer: {
+    label: "Revenue cycle",
+    href: "/finance/revenue",
+    description: "Manage payers, pre-authorisation, claims and remittances.",
+  },
+  auditor: {
+    label: "Audit",
+    href: "/finance",
+    description: "Read the ledger, trial balance and audit trail.",
+  },
   admin: {
     label: "Administration",
     href: "/admin",
@@ -55,5 +75,42 @@ export const ROLE_LABELS: Record<Role, string> = {
   lab_tech: "Laboratory Technician",
   pharmacist: "Pharmacist",
   cashier: "Cashier",
+  accountant: "Accountant",
+  finance_officer: "Finance Officer",
+  revenue_cycle_officer: "Revenue Cycle Officer",
+  auditor: "Auditor",
   admin: "Administrator",
 };
+
+/** Roles an administrator can assign, in display order. */
+export const ASSIGNABLE_ROLES: Role[] = [
+  "receptionist",
+  "triage_nurse",
+  "doctor",
+  "lab_tech",
+  "pharmacist",
+  "cashier",
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "auditor",
+  "admin",
+];
+
+/** ERP roles may read finance screens; only finance roles may write. */
+export const FINANCE_READ_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "auditor",
+  "admin",
+];
+
+export const FINANCE_WRITE_ROLES: Role[] = ["accountant", "finance_officer", "admin"];
+
+export const REVENUE_WRITE_ROLES: Role[] = [
+  "revenue_cycle_officer",
+  "finance_officer",
+  "cashier",
+  "admin",
+];

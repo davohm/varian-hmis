@@ -16,6 +16,7 @@ import {
   ADMIN_SECTIONS,
   type AdminSection,
 } from "@/lib/admin-sections";
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/navigation";
 import { Button } from "@/components/ui/button";
 import { ErrorPanel } from "@/components/ui/error-panel";
 import { Input } from "@/components/ui/input";
@@ -739,7 +740,7 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
       label: "Role",
       type: "select",
       required: true,
-      options: ["receptionist", "triage_nurse", "doctor", "lab_tech", "pharmacist", "cashier", "admin"].map((value) => ({ value, label: value })),
+      options: ASSIGNABLE_ROLES.map((value) => ({ value, label: ROLE_LABELS[value] })),
     },
     { name: "facilityId", label: "Facility scope", type: "select", required: true, options: facilityOptions },
     { name: "branchId", label: "Branch scope (blank = all)", type: "select", options: branchOptions },
@@ -788,8 +789,8 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
           data-testid={`admin-staff-role-${row.userId}`}
           onChange={(event) => void changeRole(row, event.target.value)}
         >
-          {["receptionist", "triage_nurse", "doctor", "lab_tech", "pharmacist", "cashier", "admin"].map((role) => (
-            <option key={role} value={role}>{role}</option>
+          {ASSIGNABLE_ROLES.map((role) => (
+            <option key={role} value={role}>{ROLE_LABELS[role]}</option>
           ))}
         </select>
       ),

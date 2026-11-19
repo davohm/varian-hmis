@@ -22,7 +22,11 @@ export const auth = betterAuth({
 - Optional username login plugin for staff numbers.
 
 ## Roles
-`receptionist, triage_nurse, doctor, lab_tech, pharmacist, cashier, admin` stored in `staff_role_scopes` with facility (and optional branch) scope.
+Clinical roles: `receptionist, triage_nurse, doctor, lab_tech, pharmacist, cashier, admin`.
+
+ERP roles: `accountant, finance_officer, revenue_cycle_officer, procurement_officer, store_manager, hr_officer, payroll_officer, asset_manager, auditor`.
+
+Roles are stored in `staff_role_scopes` with facility (and optional branch) scope. ERP approval limits and segregation-of-duties rules are defined in [09-erp-scope.md](09-erp-scope.md).
 
 ## Guards — `src/server/auth/guards.ts`
 ```ts

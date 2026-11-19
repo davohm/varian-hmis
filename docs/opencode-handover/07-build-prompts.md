@@ -34,3 +34,25 @@ Facilities/branches/departments/rooms/stores CRUD, staff management with role sc
 
 ### Prompt 11 — Hardening
 Backups script, error boundaries, empty/loading states, print styles, performance pass (100k patients seed), accessibility pass, README for operators.
+
+## ERP extensions
+
+The ERP scope is specified in [09-erp-scope.md](09-erp-scope.md). Do not start these prompts until V1 passes its full verification.
+
+### Prompt 12 — Finance foundation
+Ledger accounts, fiscal periods, journals, journal lines, cost centres, posting commands, trial balance and general ledger. Add finance roles, approval limits, period-close and reversal tests.
+
+### Prompt 13 — Revenue cycle
+Payers, contracts, benefits, pre-authorisations, claims, claim lines, remittances and denials. Connect claims to encounters, invoices and payments. Add claim-lifecycle and segregation-of-duties tests.
+
+### Prompt 14 — Procurement and inventory
+Suppliers, requisitions, approvals, RFQs, LPOs, goods receipts, supplier invoices and payments. Extend the existing stock ledger. Add three-way matching, reorder and valuation tests.
+
+### Prompt 15 — HR and payroll
+Employees, contracts, attendance, shifts, leave, payroll runs, payslips and payroll lines. Add statutory summaries, cost-centre allocation, restricted access and approval tests.
+
+### Prompt 16 — Assets and maintenance
+Assets, assignments, depreciation entries, maintenance orders and disposal. Add depreciation and audit-history tests.
+
+### Prompt 17 — ERP reporting and controls
+Report catalogue, saved views, exports, approval dashboards and drill-down. Add financial statements, ageing, stock valuation and budget-variance reports.

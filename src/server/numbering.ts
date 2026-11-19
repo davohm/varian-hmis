@@ -4,7 +4,16 @@ export type DbExecutor = {
   execute: (query: SQL) => Promise<unknown>;
 };
 
-export type NumberScope = "mrn" | "encounter" | "invoice" | "receipt" | "sample";
+export type NumberScope =
+  | "mrn"
+  | "encounter"
+  | "invoice"
+  | "receipt"
+  | "sample"
+  | "journal"
+  | "claim"
+  | "preauth"
+  | "remittance";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   mrn: { infix: "", width: 5 },
@@ -12,6 +21,10 @@ const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   invoice: { infix: "I", width: 6 },
   receipt: { infix: "R", width: 6 },
   sample: { infix: "S", width: 6 },
+  journal: { infix: "J", width: 6 },
+  claim: { infix: "C", width: 6 },
+  preauth: { infix: "PA", width: 6 },
+  remittance: { infix: "RM", width: 6 },
 };
 
 function readValue(result: unknown): number {

@@ -16,6 +16,7 @@ Specification for rebuilding Varian HMIS from scratch on:
 6. [06-ui-design-system.md](06-ui-design-system.md) — clinical design language
 7. [07-build-prompts.md](07-build-prompts.md) — sequential prompts to paste into OpenCode
 8. [08-deployment.md](08-deployment.md) — cloud + mini-PC clinic deployment
+9. [09-erp-scope.md](09-erp-scope.md) — ERP domains, data model, phases and post-V1 build prompts
 
 ## Non-negotiables
 - One write authority per facility (clinic server in local mode, cloud otherwise).

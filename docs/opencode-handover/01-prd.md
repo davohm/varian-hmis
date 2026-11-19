@@ -77,7 +77,9 @@ Each hand-off is a `queue_entries` row; every station sees its live queue.
 - Mobile/tablet usable (≥ 768 px), desktop optimised.
 
 ## 7. Out of scope for V1
-Inpatient wards, theatre, radiology PACS, HR/payroll, full insurance claims (SHA e-claims later), patient portal.
+Inpatient wards, theatre, radiology PACS and patient portal are not part of the V1 clinical release.
+
+The ERP scope is not abandoned. Finance and revenue cycle, procurement and inventory, HR and payroll, assets and maintenance, and ERP management reporting are specified in [09-erp-scope.md](09-erp-scope.md) and delivered after V1 through the ERP build prompts.
 
 ## 8. Acceptance (V1 done when)
 1. Reception registers a patient; triage sees them within 2 s on another computer.

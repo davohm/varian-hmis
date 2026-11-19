@@ -1,7 +1,10 @@
 # Varian HMIS — project instructions
 
 ## Documentation
-Read `docs/opencode-handover/README.md` first, then the numbered files `01`–`08` in order. Follow them exactly. The build sequence is the 11 sequential prompts in `docs/opencode-handover/07-build-prompts.md`; run one prompt at a time.
+Read `docs/opencode-handover/README.md` first, then the numbered files `01`–`09` in order. Follow them exactly. The V1 build sequence is the 11 sequential prompts in `docs/opencode-handover/07-build-prompts.md`; run one prompt at a time. ERP extensions are specified in `docs/opencode-handover/09-erp-scope.md`.
+
+## Scope
+Varian HMIS is a clinical and ERP platform, not a clinical-only app. The ERP scope covers finance and revenue cycle, procurement and inventory, HR and payroll, assets and maintenance, and management reporting. Build ERP capabilities on the same facility-scoped, audited, idempotent, ledger-first architecture as the clinical modules.
 
 ## Development database
 Use the **local PostgreSQL 17 instance** as the dev database. A second Postgres container is for deployment only — do not start one for local development.
@@ -22,3 +25,6 @@ Use the **local PostgreSQL 17 instance** as the dev database. A second Postgres 
 
 ## Design
 Use the global Varian HMIS palette from `~/.config/opencode/AGENTS.md` (navy `#022f5b`, mint `#7ac7a1`, off-white `#fcf9f4`). It overrides the older palette in `docs/opencode-handover/06-ui-design-system.md`.
+
+## UI/UX skills
+Always use the relevant installed OpenCode skills when building or changing UI and UX. Load the skill(s) before designing or editing screens, components, layouts, motion, accessibility or interaction patterns — do not rely on generic ad-hoc styling. Start with `tastemaker` for visual direction, then the closest focused skills for the task, such as `emil-design-eng`, `design-system-*`, `accessibility-audit`, `animate`, `gestures` or the relevant `illustration-*` skill. Apply the Varian palette and existing design-system conventions on top of the skill guidance.

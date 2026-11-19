@@ -34,13 +34,15 @@ src/
     (auth)/login/
     (app)/layout.tsx            # shell: sidebar, facility switcher, user menu
     (app)/reception/ triage/ doctor/ lab/ pharmacy/ cashier/ admin/
+    (app)/finance/ procurement/ hr/ assets/   # ERP workspaces
     api/auth/[...all]/route.ts  # Better Auth
     api/events/route.ts         # SSE
     api/sync/batch/route.ts     # cloud: receive clinic batches
     api/sync/pull/route.ts      # cloud: serve catalog changes
   server/
     db/ (client.ts, schema/*.ts)
-    commands/ (patients.ts, queue.ts, encounters.ts, lab.ts, pharmacy.ts, billing.ts)
+    commands/ (patients.ts, queue.ts, encounters.ts, lab.ts, pharmacy.ts, billing.ts,
+               finance.ts, procurement.ts, payroll.ts, assets.ts)
     queries/
     auth/ (auth.ts, guards.ts)
     numbering.ts  audit.ts  events.ts

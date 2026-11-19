@@ -58,6 +58,9 @@
 - `sync_outbox(outbox_id uuid, facility_id, table_name, record_id, operation, payload jsonb, status 'pending'|'synced'|'failed', attempts, last_error, created_at, synced_at)`
 - `sync_state(key primary key, value jsonb)` — e.g. `last_pulled_at`
 
+### ERP extensions
+The finance, revenue-cycle, procurement, HR/payroll and asset tables are defined in [09-erp-scope.md](09-erp-scope.md). They follow the same tenancy, audit, command-log, outbox and append-only ledger conventions as the clinical tables.
+
 ## Numbering (no gaps, no repeats)
 `next_number(facility_id, scope)` inside the command transaction:
 ```sql
