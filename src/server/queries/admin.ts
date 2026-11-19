@@ -1,7 +1,9 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
+import { ADMIN_SECTIONS, type AdminSection } from "@/lib/admin-sections";
 import { db } from "@/server/db/client";
 import {
+  adminSectionPermissions,
   branches,
   departments,
   facilities,
@@ -144,6 +146,49 @@ export async function listAdminStaff(
     .orderBy(asc(staffProfiles.staffNumber), asc(staffRoleScopes.role));
 }
 
+export interface AdminAccessRow {
+  userId: string;
+  name: string;
+  email: string;
+  sections: AdminSection[];
+}
+
+export async function listAdminSectionAccess(
+  database: AdminDatabase,
+  facilityId: string,
+): Promise<AdminAccessRow[]> {
+  const [admins, grants] = await Promise.all([
+    database
+      .select({
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+      })
+      .from(staffRoleScopes)
+      .innerJoin(user, eq(staffRoleScopes.userId, user.id))
+      .where(
+        and(eq(staffRoleScopes.facilityId, facilityId), eq(staffRoleScopes.role, "admin")),
+      )
+      .orderBy(asc(user.name)),
+    database
+      .select({ userId: adminSectionPermissions.userId, section: adminSectionPermissions.section })
+      .from(adminSectionPermissions)
+      .where(eq(adminSectionPermissions.facilityId, facilityId)),
+  ]);
+
+  const grantsByUser = new Map<string, AdminSection[]>();
+  for (const grant of grants) {
+    const list = grantsByUser.get(grant.userId) ?? [];
+    list.push(grant.section);
+    grantsByUser.set(grant.userId, list);
+  }
+
+  return admins.map((admin) => ({
+    ...admin,
+    sections: grantsByUser.get(admin.userId) ?? [...ADMIN_SECTIONS],
+  }));
+}
+
 export async function listAdminItems(database: AdminDatabase, facilityId: string) {
   return database
     .select({
@@ -219,7 +264,8 @@ export async function listAdminPrices(database: AdminDatabase, facilityId: strin
       targetId: sql<string>`coalesce(${prices.serviceId}, ${prices.itemId})`,
       targetName: sql<string>`coalesce(${services.name}, ${items.name})`,
       amount: prices.amount,
-      active: priceLists.active,
+      active: prices.active,
+      voidedAt: prices.voidedAt,
     })
     .from(prices)
     .innerJoin(priceLists, eq(prices.priceListId, priceLists.id))

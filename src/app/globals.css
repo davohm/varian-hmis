@@ -154,3 +154,161 @@
     @apply bg-background text-foreground font-sans;
   }
 }
+
+/* ==========================================================================
+   UI HARDENING — PRINT STYLESHEET (appended; existing tokens are unchanged)
+   Clinical screens print as documents: no app chrome, no controls, ink on paper.
+   ========================================================================== */
+@page {
+  margin: 15mm;
+}
+
+@media print {
+  /* App chrome and interactive controls do not belong on paper. */
+  aside,
+  header,
+  nav,
+  button,
+  [role="button"],
+  [data-sonner-toaster],
+  [data-sonner-toast],
+  [data-slot="toast"],
+  [data-testid="connection-status"],
+  .sr-only,
+  .skip-link {
+    display: none !important;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 10pt;
+    line-height: 1.35;
+  }
+
+  /* Reclaim the full sheet from the sidebar + top bar layout. */
+  main,
+  #main-content {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Neutral surfaces: no coloured cards, shadows or text effects. */
+  .bg-background,
+  .bg-card,
+  [data-slot="card"],
+  table,
+  th,
+  td {
+    background: transparent !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  a,
+  a:visited {
+    color: #000 !important;
+    text-decoration: underline;
+  }
+
+  /* Surface the destination of external links, but not in-page navigation. */
+  a[href^="http://"]::after,
+  a[href^="https://"]::after {
+    content: " (" attr(href) ")";
+    font-size: 9pt;
+    font-weight: normal;
+    word-break: break-all;
+  }
+
+  h1 {
+    font-size: 18pt;
+    line-height: 1.2;
+  }
+
+  h2 {
+    font-size: 14pt;
+    line-height: 1.25;
+  }
+
+  h3 {
+    font-size: 12pt;
+    line-height: 1.3;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  p,
+  li,
+  td,
+  th {
+    orphans: 3;
+    widows: 3;
+  }
+
+  [data-slot="card"],
+  .card,
+  table,
+  tr,
+  figure,
+  blockquote,
+  pre {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+
+/* ==========================================================================
+   UI HARDENING — ACCESSIBILITY HELPERS (appended)
+   ========================================================================== */
+:where(a, button, [role="button"], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--brand-navy);
+  outline-offset: 2px;
+}
+
+.dark :where(a, button, [role="button"], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline-color: var(--brand-mint);
+}
+
+/* The sidebar stays navy in light mode, so use the mint ring there too. */
+:where(aside, [data-slot="sidebar"], .bg-sidebar) :where(a, button, [role="button"]):focus-visible {
+  outline-color: var(--brand-mint);
+}
+
+/* Marker class used by LoadingPanel; motion is suppressed in the block below. */
+@media (prefers-reduced-motion: reduce) {
+  .varian-skeleton {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

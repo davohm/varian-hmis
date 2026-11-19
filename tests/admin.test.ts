@@ -3,8 +3,11 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ADMIN_SECTIONS } from "../src/lib/admin-sections";
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
 import { listAudit } from "../src/server/audit";
+import { getAdminSections } from "../src/server/auth/admin-access";
+import { loadPriceMaps } from "../src/server/charges";
 import {
   changeStaffRole,
   createBranch,
@@ -19,6 +22,7 @@ import {
   createStore,
   importIcd10,
   removePrice,
+  setAdminSectionAccess,
   setBranchActive,
   setDepartmentActive,
   setFacilityActive,
@@ -35,6 +39,7 @@ import {
   upsertPrice,
 } from "../src/server/commands/admin";
 import {
+  adminSectionPermissions,
   auditLog,
   branches,
   departments,
@@ -738,13 +743,62 @@ describe("administration commands", () => {
         ),
       ).rejects.toThrow("Item not found in this facility");
 
-      await removePrice(input(scope, { id: itemPrice.priceId }), { database: ctx.db });
-      const remaining = await ctx.db
+      const beforeVoid = await ctx.db.transaction((tx) =>
+        loadPriceMaps(tx, scope.facility.id, cash.priceListId),
+      );
+      expect(beforeVoid.byItem.get(item.itemId)).toBe("5.00");
+
+      const voided = await removePrice(
+        input(scope, { id: itemPrice.priceId, reason: "Superseded by revised tariff" }),
+        { database: ctx.db },
+      );
+      expect(voided).toEqual({ priceId: itemPrice.priceId, voided: true });
+
+      const rowsAfterVoid = await ctx.db
         .select()
         .from(prices)
         .where(eq(prices.priceListId, cash.priceListId));
-      expect(remaining).toHaveLength(1);
-      expect(remaining[0].id).toBe(first.priceId);
+      expect(rowsAfterVoid).toHaveLength(2);
+      const voidedRow = rowsAfterVoid.find((row) => row.id === itemPrice.priceId);
+      expect(voidedRow).toMatchObject({
+        active: false,
+        voidedBy: scope.actorId,
+        voidReason: "Superseded by revised tariff",
+      });
+      expect(voidedRow?.voidedAt).toBeInstanceOf(Date);
+
+      const afterVoid = await ctx.db.transaction((tx) =>
+        loadPriceMaps(tx, scope.facility.id, cash.priceListId),
+      );
+      expect(afterVoid.byItem.has(item.itemId)).toBe(false);
+      expect(afterVoid.byService.get(service.serviceId)).toBe("15.75");
+
+      await expect(
+        removePrice(input(scope, { id: itemPrice.priceId }), { database: ctx.db }),
+      ).rejects.toThrow("already voided");
+
+      const reactivated = await upsertPrice(
+        input(scope, {
+          priceListId: cash.priceListId,
+          targetType: "item",
+          targetId: item.itemId,
+          amount: "6.00",
+        }),
+        { database: ctx.db },
+      );
+      expect(reactivated.priceId).toBe(itemPrice.priceId);
+      const reactivatedRows = await ctx.db
+        .select()
+        .from(prices)
+        .where(eq(prices.id, itemPrice.priceId));
+      expect(reactivatedRows[0]).toMatchObject({
+        active: true,
+        amount: "6.00",
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+      });
+
       const priceListRows = await ctx.db
         .select()
         .from(priceLists)
@@ -867,6 +921,126 @@ describe("administration commands", () => {
         await listAudit(ctx.db, scope.facility.id, { action: "no.such.admin.action" }),
       ).toHaveLength(0);
       expect(await listAudit(ctx.db, scope.facility.id, 1)).toHaveLength(1);
+    });
+  });
+
+  it("resolves admin section access with legacy full access and exact grants", async () => {
+    await withFacility(async (scope) => {
+      expect(await getAdminSections(scope.actorId, scope.facility.id, ctx.db)).toEqual([
+        ...ADMIN_SECTIONS,
+      ]);
+
+      const otherUser = await insertTestActor(ctx.db);
+      const otherFacility = await insertTestFacility(ctx.db);
+      scope.extraFacilityIds.push(otherFacility.id);
+
+      try {
+        await ctx.db.insert(adminSectionPermissions).values([
+          { userId: scope.actorId, facilityId: scope.facility.id, section: "prices" },
+          { userId: scope.actorId, facilityId: scope.facility.id, section: "audit" },
+          { userId: otherUser, facilityId: scope.facility.id, section: "staff" },
+          { userId: scope.actorId, facilityId: otherFacility.id, section: "setup" },
+        ]);
+
+        expect(await getAdminSections(scope.actorId, scope.facility.id, ctx.db)).toEqual(
+          ADMIN_SECTIONS.filter((section) => section === "prices" || section === "audit"),
+        );
+        expect(await getAdminSections(scope.actorId, otherFacility.id, ctx.db)).toEqual(["setup"]);
+        expect(await getAdminSections(otherUser, scope.facility.id, ctx.db)).toEqual(["staff"]);
+        expect(await getAdminSections(newId(), scope.facility.id, ctx.db)).toEqual([
+          ...ADMIN_SECTIONS,
+        ]);
+      } finally {
+        await deleteTestActor(ctx.db, otherUser);
+      }
+    });
+  });
+
+  it("manages explicit admin section grants with audited, safe rules", async () => {
+    await withFacility(async (scope) => {
+      const targetId = await insertTestActor(ctx.db);
+      const nonAdminId = await insertTestActor(ctx.db);
+      await ctx.db.insert(staffRoleScopes).values({
+        userId: targetId,
+        role: "admin",
+        facilityId: scope.facility.id,
+        branchId: null,
+      });
+      await ctx.db.insert(staffRoleScopes).values({
+        userId: nonAdminId,
+        role: "receptionist",
+        facilityId: scope.facility.id,
+        branchId: null,
+      });
+
+      try {
+        const updated = await setAdminSectionAccess(
+          input(scope, { userId: targetId, sections: ["audit", "prices"] }),
+          { database: ctx.db },
+        );
+        expect([...updated.sections].sort()).toEqual(["audit", "prices"]);
+        expect(await getAdminSections(targetId, scope.facility.id, ctx.db)).toEqual(
+          ADMIN_SECTIONS.filter((section) => section === "prices" || section === "audit"),
+        );
+
+        const audits = await listAudit(ctx.db, scope.facility.id, {
+          action: "admin.access.sections",
+          entity: "admin_section_permissions",
+          entityId: targetId,
+        });
+        expect(audits).toHaveLength(1);
+        expect(audits[0].details).toMatchObject({ sections: ["audit", "prices"] });
+
+        await expect(
+          setAdminSectionAccess(
+            input(scope, { userId: targetId, sections: ["audit", "audit"] }),
+            { database: ctx.db },
+          ),
+        ).rejects.toThrow("Duplicate administration sections");
+        await expect(
+          setAdminSectionAccess(
+            input(scope, { userId: nonAdminId, sections: ["audit"] }),
+            { database: ctx.db },
+          ),
+        ).rejects.toThrow("not an administrator");
+        await expect(
+          setAdminSectionAccess(
+            input(scope, {
+              userId: targetId,
+              sections: ["audit"],
+              allowedFacilityIds: [newId()],
+            }),
+            { database: ctx.db },
+          ),
+        ).rejects.toThrow("outside your administration scope");
+        await expect(
+          setAdminSectionAccess(input(scope, { userId: scope.actorId, sections: [] }), {
+            database: ctx.db,
+          }),
+        ).rejects.toThrow("clearing your own access");
+
+        const reset = await setAdminSectionAccess(
+          input(scope, { userId: targetId, sections: [] }),
+          { database: ctx.db },
+        );
+        expect(reset).toEqual({ userId: targetId, sections: [] });
+        const grants = await ctx.db
+          .select()
+          .from(adminSectionPermissions)
+          .where(
+            and(
+              eq(adminSectionPermissions.userId, targetId),
+              eq(adminSectionPermissions.facilityId, scope.facility.id),
+            ),
+          );
+        expect(grants).toHaveLength(0);
+        expect(await getAdminSections(targetId, scope.facility.id, ctx.db)).toEqual([
+          ...ADMIN_SECTIONS,
+        ]);
+      } finally {
+        await deleteTestActor(ctx.db, targetId);
+        await deleteTestActor(ctx.db, nonAdminId);
+      }
     });
   });
 });

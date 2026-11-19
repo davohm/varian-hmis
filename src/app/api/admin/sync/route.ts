@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireAdmin } from "@/app/api/admin/_shared";
+import { requireAdminSection } from "@/app/api/admin/_shared";
 import { apiErrorResponse } from "@/server/auth/api-error";
 import { db } from "@/server/db/client";
 import {
@@ -24,7 +24,7 @@ const retrySchema = z.discriminatedUnion("action", [
 
 export async function GET() {
   try {
-    const { facilityId } = await requireAdmin();
+    const { facilityId } = await requireAdminSection("sync");
     const [status, failedRows] = await Promise.all([
       getSyncStatus(db, facilityId),
       listFailedRows(db, facilityId),
@@ -37,7 +37,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { facilityId } = await requireAdmin();
+    const { facilityId } = await requireAdminSection("sync");
     const body = retrySchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
       return NextResponse.json(

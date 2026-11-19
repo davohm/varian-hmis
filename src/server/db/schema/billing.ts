@@ -88,9 +88,15 @@ export const prices = pgTable(
     serviceId: uuid("service_id").references(() => services.id, { onDelete: "restrict" }),
     itemId: uuid("item_id").references(() => items.id, { onDelete: "restrict" }),
     amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+    /** Voided prices are retained for invoice history and never hard-deleted. */
+    active: boolean("active").notNull().default(true),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedBy: text("voided_by"),
+    voidReason: text("void_reason"),
     ...auditColumns,
   },
   (table) => ({
+    activeIdx: index("prices_active_idx").on(table.facilityId, table.active),
     priceListServiceIdx: uniqueIndex("prices_price_list_service_idx")
       .on(table.priceListId, table.serviceId)
       .where(sql`${table.serviceId} is not null`),

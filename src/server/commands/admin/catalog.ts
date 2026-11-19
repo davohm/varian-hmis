@@ -204,6 +204,7 @@ export type UpsertPriceInput = z.input<typeof upsertPriceSchema>;
 export const removePriceSchema = z.object({
   ...adminBaseSchema,
   id: z.uuid(),
+  reason: z.string().trim().max(255).optional(),
 });
 export type RemovePriceInput = z.input<typeof removePriceSchema>;
 
@@ -852,6 +853,10 @@ export async function upsertPrice(input: UpsertPriceInput, options: CommandOptio
           targetWhere: conflictWhere,
           set: {
             amount: values.amount,
+            active: true,
+            voidedAt: null,
+            voidedBy: null,
+            voidReason: null,
             createdBy: actorId,
             updatedAt: new Date(),
             version: sql`${prices.version} + 1`,
@@ -896,20 +901,35 @@ export async function upsertPrice(input: UpsertPriceInput, options: CommandOptio
 
 export async function removePrice(input: RemovePriceInput, options: CommandOptions = {}) {
   const values = removePriceSchema.parse(input);
-  requireActor(values.actor);
+  const actorId = requireActor(values.actor);
 
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
     "removePrice",
     async (tx) => {
       const current = await tx
-        .select({ id: prices.id, priceListId: prices.priceListId })
+        .select({
+          id: prices.id,
+          priceListId: prices.priceListId,
+          active: prices.active,
+        })
         .from(prices)
         .where(and(eq(prices.id, values.id), eq(prices.facilityId, values.facilityId)))
         .limit(1);
       if (!current[0]) throw new Error("Price not found in this facility");
+      if (!current[0].active) throw new Error("Price is already voided");
 
-      await tx.delete(prices).where(eq(prices.id, values.id));
+      await tx
+        .update(prices)
+        .set({
+          active: false,
+          voidedAt: new Date(),
+          voidedBy: actorId,
+          voidReason: values.reason ?? null,
+          updatedAt: new Date(),
+          version: sql`${prices.version} + 1`,
+        })
+        .where(and(eq(prices.id, values.id), eq(prices.facilityId, values.facilityId)));
 
       await writeAdminAudit(tx, {
         facilityId: values.facilityId,
@@ -917,10 +937,14 @@ export async function removePrice(input: RemovePriceInput, options: CommandOptio
         action: "admin.price.remove",
         entity: "prices",
         entityId: values.id,
-        details: { priceListId: current[0].priceListId },
+        details: {
+          priceListId: current[0].priceListId,
+          reason: values.reason ?? null,
+          voided: true,
+        },
       });
 
-      return { priceId: values.id };
+      return { priceId: values.id, voided: true };
     },
     options,
   );

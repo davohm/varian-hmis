@@ -45,6 +45,12 @@ export function authorizeStaffAccess(
 }
 
 export function primaryRoleFor(scopes: StaffScope[], roles: Role[]): Role | null {
-  const matching = scopes.find((scope) => roles.length === 0 || roles.includes(scope.role));
+  // The shell asks for no specific role. A multi-role administrator must still
+  // see the Administration workspace even when another scope is listed first.
+  if (roles.length === 0) {
+    return scopes.find((scope) => scope.role === "admin")?.role ?? scopes[0]?.role ?? null;
+  }
+
+  const matching = scopes.find((scope) => roles.includes(scope.role));
   return matching?.role ?? scopes[0]?.role ?? null;
 }

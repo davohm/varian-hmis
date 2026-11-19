@@ -7,7 +7,7 @@ import { changeStaffRole } from "@/server/commands/admin";
 import { db } from "@/server/db/client";
 import { listAdminStaff } from "@/server/queries/admin";
 
-import { requireAdmin } from "../_shared";
+import { requireAdminSection } from "../_shared";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ const roleChangeSchema = z.object({
 
 export async function GET() {
   try {
-    const { facilityId } = await requireAdmin();
+    const { facilityId } = await requireAdminSection("staff");
     return NextResponse.json({ staff: await listAdminStaff(db, facilityId) });
   } catch (error) {
     return apiErrorResponse(error);
@@ -28,7 +28,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { facilityId, staff } = await requireAdmin();
+    const { facilityId, staff } = await requireAdminSection("staff");
     const parsed = roleChangeSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
       return NextResponse.json(

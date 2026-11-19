@@ -11,6 +11,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+import { ADMIN_SECTIONS } from "../../../lib/admin-sections";
 import { newId } from "../../../lib/uuid";
 import { user } from "./auth";
 import { branches, facilities } from "./tenancy";
@@ -68,6 +69,35 @@ export const staffRoleScopes = pgTable(
     uniqueBranch: uniqueIndex("staff_role_scopes_unique_branch")
       .on(table.userId, table.role, table.facilityId, table.branchId)
       .where(sql`${table.branchId} is not null`),
+  }),
+);
+
+export const adminSectionEnum = pgEnum("admin_section", ADMIN_SECTIONS);
+
+/**
+ * Explicit per-section grants. No rows for a user/facility means legacy full
+ * administration access; any row means only the listed sections are allowed.
+ */
+export const adminSectionPermissions = pgTable(
+  "admin_section_permissions",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    section: adminSectionEnum("section").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userFacilityIdx: index("admin_section_permissions_user_facility_idx").on(
+      table.userId,
+      table.facilityId,
+    ),
+    uniqueGrant: uniqueIndex("admin_section_permissions_unique")
+      .on(table.userId, table.facilityId, table.section),
   }),
 );
 

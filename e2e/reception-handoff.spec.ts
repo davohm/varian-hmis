@@ -7,7 +7,8 @@ async function signIn(page: Page, email: string) {
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).not.toHaveURL(/\/login$/);
+  await page.waitForURL(/\/(reception|triage|doctor|lab|pharmacy|cashier|admin)$/);
+  await expect(page.locator("[data-testid^='screen-']").first()).toBeVisible();
 }
 
 async function registerPatient(page: Page, suffix: string) {

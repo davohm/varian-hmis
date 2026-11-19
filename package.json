@@ -15,6 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:performance": "tsx scripts/seed-performance.ts",
+    "db:backup": "tsx scripts/backup.ts",
     "sync:worker": "tsx scripts/sync-worker.ts",
     "sync:once": "tsx scripts/sync-worker.ts --once"
   },

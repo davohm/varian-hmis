@@ -111,7 +111,8 @@ async function loadServices(
     );
 }
 
-async function loadPriceMaps(
+/** Active negotiated prices used when materialising encounter charges. */
+export async function loadPriceMaps(
   tx: CommandTransaction,
   facilityId: string,
   priceListId: string | null,
@@ -123,7 +124,13 @@ async function loadPriceMaps(
   const rows = await tx
     .select({ serviceId: prices.serviceId, itemId: prices.itemId, amount: prices.amount })
     .from(prices)
-    .where(and(eq(prices.facilityId, facilityId), eq(prices.priceListId, priceListId)));
+    .where(
+      and(
+        eq(prices.facilityId, facilityId),
+        eq(prices.priceListId, priceListId),
+        eq(prices.active, true),
+      ),
+    );
 
   for (const row of rows) {
     if (row.serviceId) byService.set(row.serviceId, row.amount);

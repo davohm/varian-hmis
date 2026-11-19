@@ -14,6 +14,7 @@ import {
   createStaff,
   createStore,
   importIcd10,
+  setAdminSectionAccess,
   removePrice,
   setBranchActive,
   setDepartmentActive,
@@ -87,6 +88,8 @@ const commands: Record<string, (input: RawInput) => Promise<unknown>> = {
   updateRoom: (input) => updateRoom(input as UpdateRoomInput),
   setRoomActive: (input) => setRoomActive(input as SetRoomActiveInput),
   createStore: (input) => createStore(input as Parameters<typeof createStore>[0]),
+  setAdminSectionAccess: (input) =>
+    setAdminSectionAccess(input as Parameters<typeof setAdminSectionAccess>[0]),
   updateStore: (input) => updateStore(input as Parameters<typeof updateStore>[0]),
   setStoreActive: (input) => setStoreActive(input as Parameters<typeof setStoreActive>[0]),
   changeStaffRole: (input) => changeStaffRole(input as ChangeStaffRoleInput),

@@ -7,6 +7,7 @@ import { DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
 import {
   account,
+  adminSectionPermissions,
   auditLog,
   branches,
   cashierSessions,
@@ -106,6 +107,7 @@ export async function insertTestActor(db: TestDatabase["db"]) {
 
 export async function deleteTestActor(db: TestDatabase["db"], userId: string) {
   await db.transaction(async (tx) => {
+    await tx.delete(adminSectionPermissions).where(eq(adminSectionPermissions.userId, userId));
     await tx.delete(staffRoleScopes).where(eq(staffRoleScopes.userId, userId));
     await tx.delete(session).where(eq(session.userId, userId));
     await tx.delete(account).where(eq(account.userId, userId));
@@ -126,6 +128,7 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
       .from(staffRoleScopes)
       .where(eq(staffRoleScopes.facilityId, facilityId));
     const userIds = scopedUsers.map((row) => row.userId);
+    await tx.delete(adminSectionPermissions).where(eq(adminSectionPermissions.facilityId, facilityId));
     await tx.delete(staffRoleScopes).where(eq(staffRoleScopes.facilityId, facilityId));
     if (userIds.length) {
       await tx.delete(session).where(inArray(session.userId, userIds));

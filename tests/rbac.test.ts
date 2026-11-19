@@ -76,6 +76,8 @@ describe("staff access rules", () => {
     const scopes = [scope("cashier"), scope("pharmacist")];
     expect(primaryRoleFor(scopes, ["pharmacist"])).toBe("pharmacist");
     expect(primaryRoleFor(scopes, [])).toBe("cashier");
+    expect(primaryRoleFor([scope("receptionist"), scope("admin")], [])).toBe("admin");
+    expect(primaryRoleFor([scope("admin"), scope("receptionist")], [])).toBe("admin");
     expect(primaryRoleFor([], ["doctor"])).toBeNull();
   });
 

@@ -5,7 +5,7 @@ import { apiErrorResponse } from "@/server/auth/api-error";
 import { listAudit } from "@/server/audit";
 import { db } from "@/server/db/client";
 
-import { requireAdmin } from "../_shared";
+import { requireAdminSection } from "../_shared";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ const auditQuerySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const { facilityId } = await requireAdmin();
+    const { facilityId } = await requireAdminSection("audit");
     const params = Object.fromEntries(request.nextUrl.searchParams.entries());
     const parsed = auditQuerySchema.safeParse(params);
     if (!parsed.success) {

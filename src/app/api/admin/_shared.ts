@@ -2,7 +2,9 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { ADMIN_COMMAND_SECTIONS, type AdminSection } from "@/lib/admin-sections";
 import { apiErrorResponse } from "@/server/auth/api-error";
+import { getAdminSections } from "@/server/auth/admin-access";
 import { requireApiFacility, actorFromRequest } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 
@@ -10,6 +12,21 @@ export const ADMIN_ROLES = ["admin"] as const;
 
 export async function requireAdmin() {
   return requireApiFacility([...ADMIN_ROLES]);
+}
+
+/** Admin identity plus the effective per-section grants for the active facility. */
+export async function requireAdminAccess() {
+  const context = await requireAdmin();
+  const sections = await getAdminSections(context.staff.user.id, context.facilityId);
+  return { ...context, sections };
+}
+
+export async function requireAdminSection(section: AdminSection) {
+  const context = await requireAdminAccess();
+  if (!context.sections.includes(section)) {
+    throw new ForbiddenError("You do not have access to this administration section.");
+  }
+  return context;
 }
 
 type AdminCommand = (input: Record<string, unknown>) => Promise<unknown>;
@@ -25,7 +42,8 @@ export async function handleAdminCommand(
   commands: Record<string, AdminCommand>,
 ) {
   try {
-    const { context, facilityId, staff } = await requireAdmin();
+    const context = await requireAdminAccess();
+    const { facilityId, staff, sections } = context;
     const body = commandRequestSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
       return NextResponse.json(
@@ -35,8 +53,12 @@ export async function handleAdminCommand(
     }
 
     const run = commands[body.data.command];
-    if (!run) {
+    const commandSection = ADMIN_COMMAND_SECTIONS[body.data.command];
+    if (!run || !commandSection) {
       return NextResponse.json({ error: "Unknown admin command" }, { status: 400 });
+    }
+    if (!sections.includes(commandSection)) {
+      throw new ForbiddenError("You do not have access to this administration section.");
     }
 
     const { facilityId: _ignoredFacility, actor: _ignoredActor, ...cleanInput } = body.data.input;
@@ -47,7 +69,7 @@ export async function handleAdminCommand(
       ...cleanInput,
       facilityId,
       actor: actorFromRequest(request, staff.user.id),
-      allowedFacilityIds: context?.facilities.map((facility) => facility.id) ?? [facilityId],
+      allowedFacilityIds: context.context?.facilities.map((facility) => facility.id) ?? [facilityId],
     });
 
     return NextResponse.json({ result }, { status: 201 });

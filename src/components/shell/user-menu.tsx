@@ -40,7 +40,6 @@ export function UserMenu({ name, email, roleLabel }: UserMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="User menu"
         className="flex h-9 items-center gap-2 rounded-md border border-border bg-card px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span className="grid size-6 place-items-center rounded bg-primary font-mono text-[10px] font-semibold text-primary-foreground">

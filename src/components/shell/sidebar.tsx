@@ -36,7 +36,9 @@ export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
   const item = role ? ROLE_NAV[role] : null;
   const Icon = role ? ROLE_ICONS[role] : ClipboardList;
-  const active = pathname === item?.href;
+  const active = item
+    ? pathname === item.href || pathname.startsWith(`${item.href}/`)
+    : false;
 
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">

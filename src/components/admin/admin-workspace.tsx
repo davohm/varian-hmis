@@ -8,11 +8,19 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 
+import {
+  ADMIN_SECTION_META,
+  ADMIN_SECTIONS,
+  type AdminSection,
+} from "@/lib/admin-sections";
 import { Button } from "@/components/ui/button";
+import { ErrorPanel } from "@/components/ui/error-panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadingPanel } from "@/components/ui/loading-panel";
 import { cn } from "cn";
 
 type Row = { id: string; active?: boolean; isActive?: boolean };
@@ -90,6 +98,7 @@ interface PriceRow extends Row {
   targetName: string;
   amount: string;
   active: boolean;
+  voidedAt: string | null;
 }
 
 interface AuditEvent extends Row {
@@ -102,8 +111,16 @@ interface AuditEvent extends Row {
   details: Record<string, unknown>;
 }
 
+interface AdminAccessRow {
+  userId: string;
+  name: string;
+  email: string;
+  sections: AdminSection[];
+}
+
 interface Overview {
   facilityId: string;
+  sections: AdminSection[];
   facilities: FacilityRow[];
   setup: {
     branches: BranchRow[];
@@ -112,6 +129,7 @@ interface Overview {
     stores: StoreRow[];
   };
   staff: StaffRow[];
+  adminAccess: AdminAccessRow[];
   catalogs: {
     items: CatalogRow[];
     labTests: CatalogRow[];
@@ -120,8 +138,6 @@ interface Overview {
   priceLists: PriceListRow[];
   prices: PriceRow[];
 }
-
-type Tab = "setup" | "staff" | "catalogs" | "prices" | "audit" | "sync";
 
 interface SyncStatus {
   appMode: "cloud" | "clinic";
@@ -618,6 +634,88 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
   );
 }
 
+function AdminAccessPanel({ overview, busy, run }: PanelProps) {
+  const [userId, setUserId] = useState("");
+  const [sections, setSections] = useState<AdminSection[]>([]);
+  const admins = overview.adminAccess;
+
+  useEffect(() => {
+    const initial = admins.find((admin) => admin.userId === userId) ?? admins[0];
+    setUserId(initial?.userId ?? "");
+    setSections(initial?.sections ?? []);
+  }, [admins, userId]);
+
+  function toggle(section: AdminSection) {
+    setSections((current) =>
+      current.includes(section)
+        ? current.filter((item) => item !== section)
+        : [...current, section],
+    );
+  }
+
+  async function save() {
+    if (!userId) return;
+    await run(
+      "Saving access…",
+      "setAdminSectionAccess",
+      { userId, sections },
+      "Administration access updated.",
+    );
+  }
+
+  return (
+    <Panel
+      title="Administration access"
+      description="Limit an administrator to specific sections. No selection keeps full access."
+      testId="admin-access-panel"
+    >
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <Label htmlFor="admin-access-user">Administrator</Label>
+          <select
+            id="admin-access-user"
+            className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+            value={userId}
+            data-testid="admin-access-user"
+            onChange={(event) => setUserId(event.target.value)}
+          >
+            {admins.length === 0 ? <option value="">No administrators</option> : null}
+            {admins.map((admin) => (
+              <option key={admin.userId} value={admin.userId}>
+                {admin.name} ({admin.email})
+              </option>
+            ))}
+          </select>
+        </div>
+        <fieldset className="grid gap-2" data-testid="admin-access-sections">
+          <legend className="mb-1 text-sm font-medium">Permitted sections</legend>
+          {ADMIN_SECTIONS.map((section) => (
+            <label key={section} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 accent-[var(--primary)]"
+                checked={sections.includes(section)}
+                data-testid={`admin-access-section-${section}`}
+                onChange={() => toggle(section)}
+              />
+              {ADMIN_SECTION_META[section].label}
+            </label>
+          ))}
+        </fieldset>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!userId || busy !== null}
+          data-testid="admin-access-save"
+          onClick={() => void save()}
+        >
+          {busy === "Saving access…" ? "Saving…" : "Save access"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
 function StaffPanel({ overview, busy, run }: PanelProps) {
   const facilityOptions = useMemo(
     () => overview.facilities.map((facility) => ({ value: facility.id, label: `${facility.code} — ${facility.name}` })),
@@ -739,6 +837,9 @@ function StaffPanel({ overview, busy, run }: PanelProps) {
           onCancel={editing ? () => { setEditing(null); setFormKey((key) => key + 1); } : undefined}
         />
       </Panel>
+      <div className="lg:col-span-2">
+        <AdminAccessPanel overview={overview} busy={busy} run={run} />
+      </div>
     </div>
   );
 }
@@ -938,11 +1039,23 @@ function PriceListsPanel({ overview, busy, run }: PanelProps) {
     { key: "target", label: "Service / item", render: (row) => row.targetName },
     { key: "type", label: "Type", render: (row) => row.targetType },
     { key: "amount", label: "Amount", render: (row) => <span className="font-mono tabular-nums">{row.amount}</span> },
+    { key: "status", label: "Status", render: (row) => <StatusBadge active={row.active} /> },
     {
       key: "actions",
       label: "Actions",
-      render: (row) => (
-        <Button type="button" size="xs" variant="ghost" onClick={() => void run("Removing…", "removePrice", { id: row.id }, "Price removed.")}>Remove</Button>
+      render: (row) => row.active ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={busy !== null}
+          data-testid={`admin-price-remove-${row.id}`}
+          onClick={() => void run("Voiding…", "removePrice", { id: row.id }, "Price voided; the row remains in history.")}
+        >
+          Void price
+        </Button>
+      ) : (
+        <span className="text-xs text-muted-foreground">Voided</span>
       ),
     },
   ];
@@ -1201,9 +1314,8 @@ function SyncPanel() {
   );
 }
 
-export function AdminWorkspace() {
+export function AdminWorkspace({ section }: { section: AdminSection }) {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [tab, setTab] = useState<Tab>("setup");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1257,22 +1369,29 @@ export function AdminWorkspace() {
     }
   }
 
-  const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "setup", label: "Facility setup" },
-    { id: "staff", label: "Staff" },
-    { id: "catalogs", label: "Catalogs" },
-    { id: "prices", label: "Price lists" },
-    { id: "audit", label: "Audit" },
-    { id: "sync", label: "Sync" },
-  ];
-
   if (!overview) {
+    if (error) {
+      return (
+        <div data-testid="admin-loading">
+          <ErrorPanel
+            error={new Error(error)}
+            reset={() => void load()}
+            title="Administration data could not be loaded"
+          />
+        </div>
+      );
+    }
     return (
-      <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground" data-testid="admin-loading">
-        {error ?? "Loading administration data…"}
-      </div>
+      <LoadingPanel
+        label="Loading administration data"
+        title="Loading administration data…"
+        rows={4}
+        data-testid="admin-loading"
+      />
     );
   }
+
+  const visibleSections = ADMIN_SECTIONS.filter((item) => overview.sections.includes(item));
 
   return (
     <div className="space-y-5">
@@ -1296,33 +1415,35 @@ export function AdminWorkspace() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-border" role="tablist" aria-label="Administration sections">
-        {tabs.map((item) => (
-          <button
-            key={item.id}
-            type="button"
+      <div role="tablist" className="flex flex-wrap gap-1 border-b border-border" aria-label="Administration sections">
+        {visibleSections.map((item) => (
+          <Link
+            key={item}
+            href={ADMIN_SECTION_META[item].href}
             role="tab"
-            aria-selected={tab === item.id}
-            data-testid={`admin-tab-${item.id}`}
+            aria-selected={section === item}
+            aria-controls="admin-section-panel"
+            data-testid={`admin-tab-${item}`}
             className={cn(
               "border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-              tab === item.id
+              section === item
                 ? "border-[var(--primary)] text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
-            onClick={() => setTab(item.id)}
           >
-            {item.label}
-          </button>
+            {ADMIN_SECTION_META[item].label}
+          </Link>
         ))}
       </div>
 
-      {tab === "setup" ? <FacilitySetupPanel overview={overview} busy={busy} run={run} /> : null}
-      {tab === "staff" ? <StaffPanel overview={overview} busy={busy} run={run} /> : null}
-      {tab === "catalogs" ? <CatalogsPanel overview={overview} busy={busy} run={run} /> : null}
-      {tab === "prices" ? <PriceListsPanel overview={overview} busy={busy} run={run} /> : null}
-      {tab === "audit" ? <AuditPanel /> : null}
-      {tab === "sync" ? <SyncPanel /> : null}
+      <div id="admin-section-panel" role="tabpanel" aria-label={ADMIN_SECTION_META[section].label}>
+        {section === "setup" ? <FacilitySetupPanel overview={overview} busy={busy} run={run} /> : null}
+        {section === "staff" ? <StaffPanel overview={overview} busy={busy} run={run} /> : null}
+        {section === "catalogs" ? <CatalogsPanel overview={overview} busy={busy} run={run} /> : null}
+        {section === "prices" ? <PriceListsPanel overview={overview} busy={busy} run={run} /> : null}
+        {section === "audit" ? <AuditPanel /> : null}
+        {section === "sync" ? <SyncPanel /> : null}
+      </div>
     </div>
   );
 }
