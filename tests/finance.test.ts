@@ -42,7 +42,12 @@ import {
   listFiscalPeriods,
   listLedgerAccounts,
 } from "../src/server/queries/finance";
-import { getClaim, getRevenueOverview, listClaims } from "../src/server/queries/revenue";
+import {
+  getClaim,
+  getRevenueOverview,
+  listClaims,
+  listRevenueEncounters,
+} from "../src/server/queries/revenue";
 
 import {
   cleanupTestFacility,
@@ -811,6 +816,20 @@ describe("revenue cycle", () => {
         ),
         /append-only/i,
       );
+    });
+  });
+
+  it("lists claim source encounters with patient and invoice context", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const rows = await listRevenueEncounters(ctx.db, fixture.facility.id);
+      const row = rows.find((item) => item.id === fixture.encounterId);
+      expect(row).toMatchObject({
+        patientId: fixture.patientId,
+        patientName: "Amina Otieno",
+        invoiceId: fixture.invoiceId,
+      });
+      expect(row?.mrn).toMatch(/^MRN-/);
+      expect(row?.invoiceTotal).toBe("5000.00");
     });
   });
 

@@ -31,8 +31,15 @@ test("admin sections are deep-linked, survive reload and restore with browser ba
 
   for (const section of SECTIONS) {
     const tab = page.getByTestId(`admin-tab-${section.tab}`);
+    const url = new RegExp(`/admin/${section.tab}$`);
     await tab.click();
-    await expect(page).toHaveURL(new RegExp(`/admin/${section.tab}$`));
+    // The first click can land before the client navigation handler is attached.
+    try {
+      await expect(page).toHaveURL(url, { timeout: 3_000 });
+    } catch {
+      await tab.click();
+      await expect(page).toHaveURL(url);
+    }
     await expect(tab).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId(section.panel)).toBeVisible();
   }

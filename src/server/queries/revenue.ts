@@ -7,6 +7,8 @@ import {
   claimDenials,
   claimLines,
   claims,
+  encounters,
+  invoices,
   payers,
   patients,
   payerBenefits,
@@ -538,5 +540,73 @@ export async function getRevenueOverview(
     pendingPreAuths: preAuths?.count ?? 0,
     ageing,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Claim source encounters                                             */
+/* ------------------------------------------------------------------ */
+
+export interface RevenueEncounterRow {
+  id: string;
+  encounterNo: string;
+  patientId: string;
+  patientName: string;
+  mrn: string;
+  status: string;
+  startedAt: string;
+  invoiceId: string | null;
+  invoiceNo: string | null;
+  invoiceTotal: string | null;
+}
+
+/**
+ * Visits a revenue officer can claim against. The patient and any active
+ * invoice are joined so the workspace can select both without leaving the
+ * revenue screen or borrowing another module's role-guarded endpoint.
+ */
+export async function listRevenueEncounters(
+  database: RevenueDatabase,
+  facilityId: string,
+  limit = 100,
+): Promise<RevenueEncounterRow[]> {
+  const rows = await database
+    .select({
+      id: encounters.id,
+      encounterNo: encounters.encounterNo,
+      patientId: encounters.patientId,
+      firstName: patients.firstName,
+      lastName: patients.lastName,
+      mrn: patients.mrn,
+      status: encounters.status,
+      startedAt: encounters.startedAt,
+      invoiceId: invoices.id,
+      invoiceNo: invoices.invoiceNo,
+      invoiceTotal: invoices.total,
+    })
+    .from(encounters)
+    .innerJoin(patients, eq(encounters.patientId, patients.id))
+    .leftJoin(
+      invoices,
+      and(
+        eq(invoices.encounterId, encounters.id),
+        sql`${invoices.status} in ('open', 'partial', 'paid')`,
+      ),
+    )
+    .where(eq(encounters.facilityId, facilityId))
+    .orderBy(desc(encounters.startedAt))
+    .limit(Math.min(Math.max(Math.trunc(limit), 1), 200));
+
+  return rows.map((row) => ({
+    id: row.id,
+    encounterNo: row.encounterNo,
+    patientId: row.patientId,
+    patientName: `${row.firstName} ${row.lastName}`.trim(),
+    mrn: row.mrn,
+    status: row.status,
+    startedAt: row.startedAt.toISOString(),
+    invoiceId: row.invoiceId,
+    invoiceNo: row.invoiceNo,
+    invoiceTotal: row.invoiceTotal,
+  }));
 }
 

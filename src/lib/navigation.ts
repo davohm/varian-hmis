@@ -115,6 +115,16 @@ export const FINANCE_READ_ROLES: Role[] = [
 
 export const FINANCE_WRITE_ROLES: Role[] = ["accountant", "finance_officer", "admin"];
 
+/** Roles that may read payer, authorisation and claim data. */
+export const REVENUE_READ_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "cashier",
+  "auditor",
+  "admin",
+];
+
 export const REVENUE_WRITE_ROLES: Role[] = [
   "revenue_cycle_officer",
   "finance_officer",
