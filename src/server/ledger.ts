@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { assertBalancedJournal, fiscalYearFor } from "@/lib/finance";
 import { fromCents, toCents } from "@/lib/billing";
@@ -350,4 +350,84 @@ export async function listActiveAccounts(tx: CommandTransaction, facilityId: str
     .from(ledgerAccounts)
     .where(and(eq(ledgerAccounts.facilityId, facilityId), eq(ledgerAccounts.active, true)))
     .orderBy(asc(ledgerAccounts.code));
+}
+
+/**
+ * Reverse every posted journal that belongs to one business document. Voids and
+ * payment reversals call this so the ledger keeps both the original entry and
+ * its reversal, never an edit.
+ */
+export async function reverseJournalsForSource(
+  tx: CommandTransaction,
+  input: {
+    facilityId: string;
+    sourceType: string;
+    sourceId: string;
+    entryDate: string;
+    reason: string;
+    userId?: string | null;
+    ip?: string | null;
+    deviceId?: string | null;
+  },
+): Promise<string[]> {
+  const entries = await tx
+    .select()
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.facilityId, input.facilityId),
+        eq(journalEntries.sourceType, input.sourceType),
+        eq(journalEntries.sourceId, input.sourceId),
+        eq(journalEntries.status, "posted"),
+        isNull(journalEntries.reversedEntryId),
+      ),
+    )
+    .orderBy(asc(journalEntries.entryDate));
+
+  const reversalNumbers: string[] = [];
+  for (const entry of entries) {
+    const lines = await tx
+      .select()
+      .from(journalLines)
+      .where(eq(journalLines.entryId, entry.id))
+      .orderBy(asc(journalLines.lineNo));
+    if (lines.length === 0) continue;
+
+    const reversal = await postJournal(tx, {
+      facilityId: input.facilityId,
+      entryDate: input.entryDate,
+      description: `Reversal of ${entry.entryNo}: ${input.reason}`,
+      sourceType: "reversal",
+      sourceId: entry.id,
+      lines: lines.map((line) => ({
+        accountId: line.accountId,
+        debit: line.credit,
+        credit: line.debit,
+        description: line.description,
+        costCenterId: line.costCenterId,
+      })),
+      userId: input.userId,
+      ip: input.ip,
+      deviceId: input.deviceId,
+    });
+
+    await tx
+      .update(journalEntries)
+      .set({
+        status: "reversed",
+        reversalReason: input.reason,
+        reversedEntryId: entry.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(journalEntries.id, entry.id));
+
+    await tx
+      .update(journalEntries)
+      .set({ reversedEntryId: entry.id })
+      .where(eq(journalEntries.id, reversal.entryId));
+
+    reversalNumbers.push(reversal.entryNo);
+  }
+
+  return reversalNumbers;
 }

@@ -901,6 +901,33 @@ export async function transitionClaim(
         })
         .where(and(eq(claims.id, claim.id), eq(claims.facilityId, values.facilityId)));
 
+      if (values.to === "submitted" && claim.invoiceId) {
+        // The invoice first booked a patient receivable. Submitting a claim to
+        // the payer moves that same debt into the insurance receivable.
+        await tryPostJournal(tx, {
+          facilityId: values.facilityId,
+          entryDate: now.toISOString().slice(0, 10),
+          description: `Claim ${claim.claimNo} submitted to payer`,
+          sourceType: "claim_submission",
+          sourceId: claim.id,
+          userId,
+          ip: values.actor.ip,
+          deviceId: values.actor.deviceId,
+          lines: [
+            {
+              systemRole: "insurance_receivable",
+              debit: claim.total,
+              description: `Claim ${claim.claimNo}`,
+            },
+            {
+              systemRole: "patient_receivable",
+              credit: claim.total,
+              description: `Reclassify invoice ${claim.invoiceId}`,
+            },
+          ],
+        });
+      }
+
       await recordAudit(tx, {
         facilityId: values.facilityId,
         userId,

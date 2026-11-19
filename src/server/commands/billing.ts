@@ -24,6 +24,7 @@ import {
   payments,
 } from "@/server/db/schema";
 import { publishEvent } from "@/server/events";
+import { reverseJournalsForSource, tryPostJournal } from "@/server/ledger";
 import { nextFormattedNumber } from "@/server/numbering";
 
 import { actorSchema, runCommand, type CommandOptions, type CommandTransaction } from "./run";
@@ -37,6 +38,15 @@ const baseSchema = {
 function actorId(values: { actor: { userId?: string | null } }): string {
   if (!values.actor.userId) throw new Error("A signed-in user is required");
   return values.actor.userId;
+}
+
+/** Cash stays in the till; every other tender lands in the bank. */
+function tenderAccountRole(method: PaymentMethod): string {
+  return method === "cash" ? "cash" : "bank";
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 async function loadFacility(tx: CommandTransaction, facilityId: string) {
@@ -274,6 +284,29 @@ export async function openInvoice(
           ),
         );
 
+      await tryPostJournal(tx, {
+        facilityId: values.facilityId,
+        entryDate: today(),
+        description: `Invoice ${invoiceNo} for ${encounter.encounterNo}`,
+        sourceType: "invoice",
+        sourceId: invoiceId,
+        userId,
+        ip: values.actor.ip,
+        deviceId: values.actor.deviceId,
+        lines: [
+          {
+            systemRole: "patient_receivable",
+            debit: total,
+            description: `Receivable ${invoiceNo}`,
+          },
+          {
+            systemRole: "service_revenue",
+            credit: total,
+            description: `Revenue ${invoiceNo}`,
+          },
+        ],
+      });
+
       await recordAudit(tx, {
         facilityId: values.facilityId,
         userId,
@@ -382,6 +415,17 @@ export async function voidInvoice(
         )
         .returning({ id: charges.id });
 
+      const reversalEntryNos = await reverseJournalsForSource(tx, {
+        facilityId: values.facilityId,
+        sourceType: "invoice",
+        sourceId: invoice.id,
+        entryDate: today(),
+        reason: `Invoice ${invoice.invoiceNo} voided: ${values.reason}`,
+        userId,
+        ip: values.actor.ip,
+        deviceId: values.actor.deviceId,
+      });
+
       await recordAudit(tx, {
         facilityId: values.facilityId,
         userId,
@@ -394,6 +438,7 @@ export async function voidInvoice(
           invoiceNo: invoice.invoiceNo,
           reason: values.reason,
           voidedCharges: voidedCharges.length,
+          reversalEntries: reversalEntryNos,
         },
         deviceId: values.actor.deviceId,
         ip: values.actor.ip,
@@ -518,6 +563,32 @@ export async function takePayment(
       const finalTotal = updated?.total ?? total;
       const finalPaid = updated?.paid ?? paid;
       const outstanding = fromCents(Math.max(0, toCents(finalTotal) - toCents(finalPaid)));
+
+      const tenderTotal = fromCents(
+        created.reduce((sum, payment) => sum + toCents(payment.amount), 0),
+      );
+      await tryPostJournal(tx, {
+        facilityId: values.facilityId,
+        entryDate: today(),
+        description: `Payment for invoice ${invoice.invoiceNo}`,
+        sourceType: "payment",
+        sourceId: created[0]?.paymentId ?? invoice.id,
+        userId,
+        ip: values.actor.ip,
+        deviceId: values.actor.deviceId,
+        lines: [
+          ...created.map((payment) => ({
+            systemRole: tenderAccountRole(payment.method),
+            debit: payment.amount,
+            description: `${payment.method} ${payment.receiptNo}`,
+          })),
+          {
+            systemRole: "patient_receivable",
+            credit: tenderTotal,
+            description: `Settle ${invoice.invoiceNo}`,
+          },
+        ],
+      });
 
       await recordAudit(tx, {
         facilityId: values.facilityId,
@@ -654,6 +725,30 @@ export async function reversePayment(
       const total = updated?.total ?? invoice.total;
       const paid = updated?.paid ?? invoice.paid;
       const outstanding = fromCents(Math.max(0, toCents(total) - toCents(paid)));
+
+      const reversalAmount = fromCents(Math.abs(toCents(payment.amount)));
+      await tryPostJournal(tx, {
+        facilityId: values.facilityId,
+        entryDate: today(),
+        description: `Reversal of receipt ${payment.receiptNo}`,
+        sourceType: "payment_reversal",
+        sourceId: reversalId,
+        userId,
+        ip: values.actor.ip,
+        deviceId: values.actor.deviceId,
+        lines: [
+          {
+            systemRole: "patient_receivable",
+            debit: reversalAmount,
+            description: `Restore ${invoice.invoiceNo}`,
+          },
+          {
+            systemRole: tenderAccountRole(payment.method),
+            credit: reversalAmount,
+            description: `Reverse ${payment.receiptNo}`,
+          },
+        ],
+      });
 
       await recordAudit(tx, {
         facilityId: values.facilityId,

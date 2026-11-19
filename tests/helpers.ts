@@ -9,32 +9,48 @@ import {
   account,
   adminSectionPermissions,
   auditLog,
+  bankAccounts,
+  bankReconciliations,
+  bankTransactions,
   branches,
   cashierSessions,
   charges,
+  claimDenials,
+  claimLines,
+  claims,
   clinicalNotes,
   commandLog,
+  costCenters,
   departments,
   diagnoses,
   dispenses,
   encounters,
   facilities,
   facilitySyncTokens,
+  fiscalPeriods,
   invoices,
   itemBatches,
   items,
+  journalEntries,
+  journalLines,
   labOrderItems,
   labOrders,
   labResults,
   labTests,
+  ledgerAccounts,
   nextOfKin,
   numberSequences,
   patients,
+  payerBenefits,
+  payerContracts,
+  payers,
   payments,
+  preAuthorizations,
   prescriptions,
   priceLists,
   prices,
   queueEntries,
+  remittances,
   rooms,
   services,
   session,
@@ -140,6 +156,22 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx
       .delete(payments)
       .where(and(eq(payments.facilityId, facilityId), isNotNull(payments.reversedPaymentId)));
+    await tx.delete(claimDenials).where(eq(claimDenials.facilityId, facilityId));
+    await tx.delete(remittances).where(eq(remittances.facilityId, facilityId));
+    await tx.delete(claimLines).where(eq(claimLines.facilityId, facilityId));
+    await tx.delete(claims).where(eq(claims.facilityId, facilityId));
+    await tx.delete(preAuthorizations).where(eq(preAuthorizations.facilityId, facilityId));
+    await tx.delete(payerBenefits).where(eq(payerBenefits.facilityId, facilityId));
+    await tx.delete(payerContracts).where(eq(payerContracts.facilityId, facilityId));
+    await tx.delete(payers).where(eq(payers.facilityId, facilityId));
+    await tx.delete(bankTransactions).where(eq(bankTransactions.facilityId, facilityId));
+    await tx.delete(bankReconciliations).where(eq(bankReconciliations.facilityId, facilityId));
+    await tx.delete(bankAccounts).where(eq(bankAccounts.facilityId, facilityId));
+    await tx.delete(journalLines).where(eq(journalLines.facilityId, facilityId));
+    await tx.delete(journalEntries).where(eq(journalEntries.facilityId, facilityId));
+    await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
+    await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));
+    await tx.delete(ledgerAccounts).where(eq(ledgerAccounts.facilityId, facilityId));
     await tx.delete(payments).where(eq(payments.facilityId, facilityId));
     await tx.delete(charges).where(eq(charges.facilityId, facilityId));
     await tx.delete(invoices).where(eq(invoices.facilityId, facilityId));
