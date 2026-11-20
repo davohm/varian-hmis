@@ -110,6 +110,17 @@ export const ADMIN_COMMAND_SECTIONS: Record<string, AdminSection> = {
   upsertIntegrationSetting: "regulatory",
   verifyIntegrationConnection: "regulatory",
   upsertFacilityIdentifier: "regulatory",
+  recordConsent: "privacy",
+  withdrawConsent: "privacy",
+  createDataSubjectRequest: "privacy",
+  completeDataSubjectRequest: "privacy",
+  recordBreach: "privacy",
+  notifyBreach: "privacy",
+  createSharingAgreement: "privacy",
+  recordTransferAssessment: "privacy",
+  restrictPatientRecord: "privacy",
+  logChartAccess: "privacy",
+  exportPatientData: "privacy",
 };
 
 export function isAdminSection(value: string): value is AdminSection {

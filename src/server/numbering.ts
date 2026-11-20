@@ -13,7 +13,8 @@ export type NumberScope =
   | "journal"
   | "claim"
   | "preauth"
-  | "remittance";
+  | "remittance"
+  | "breach";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   mrn: { infix: "", width: 5 },
@@ -25,6 +26,7 @@ const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   claim: { infix: "C", width: 6 },
   preauth: { infix: "PA", width: 6 },
   remittance: { infix: "RM", width: 6 },
+  breach: { infix: "BR", width: 5 },
 };
 
 function readValue(result: unknown): number {
