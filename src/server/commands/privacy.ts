@@ -258,7 +258,7 @@ export async function assertValidPayerSharingConsent(
   }
   const valid = await findLatestValidConsent(tx, values.facilityId, values.patientId, "payer_sharing");
   if (!valid) {
-    await recordAudit(tx, {
+    await recordAudit(db, {
       ...auditMeta(values),
       action: values.action,
       entity: values.entity,
@@ -297,7 +297,7 @@ export async function assertMinorTreatmentConsent(
   const guardian = await findLatestValidConsent(tx, values.facilityId, values.patientId, "minor");
   if (!guardian) {
     if (values.actor) {
-      await recordAudit(tx, {
+      await recordAudit(db, {
         ...auditMeta({ facilityId: values.facilityId, actor: values.actor }),
         action: "privacy.consent.treatment_minor_refused",
         entity: "patients",
@@ -400,7 +400,9 @@ export async function recordConsent(
         .for("update");
       const supersededConsentIds = previous.map((row) => row.id);
       if (supersededConsentIds.length > 0) {
-        const supersededAt = new Date(Date.now() - 1000);
+        const now = new Date();
+        // End of previous UTC day so date-based validity checks treat it as expired immediately.
+        const supersededAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1, 23, 59, 59, 999));
         for (const row of previous) {
           const currentValidTo = row.validTo ? new Date(row.validTo) : null;
           const nextValidTo = !currentValidTo || currentValidTo > supersededAt ? supersededAt : currentValidTo;

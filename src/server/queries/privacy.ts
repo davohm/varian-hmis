@@ -1,4 +1,4 @@
-﻿import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+﻿import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 
 import { isConsentValid, toDateOnly } from "@/lib/privacy";
 import { db } from "@/server/db/client";
