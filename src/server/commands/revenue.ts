@@ -30,6 +30,7 @@ import { publishEvent } from "@/server/events";
 import { tryPostJournal } from "@/server/ledger";
 import { nextFormattedNumber } from "@/server/numbering";
 
+import { assertValidPayerSharingConsent } from "./privacy";
 import { actorSchema, runCommand, type CommandOptions, type CommandTransaction } from "./run";
 import { assertFacilityReady } from "./regulatory";
 
@@ -470,6 +471,7 @@ export const requestPreAuthorizationSchema = z.object({
   ...baseSchema,
   payerId: z.uuid(),
   contractId: z.uuid().nullable().optional(),
+  sharingAgreementId: z.uuid().nullable().optional(),
   patientId: z.uuid(),
   encounterId: z.uuid().nullable().optional(),
   requestedAmount: money,
@@ -503,6 +505,16 @@ export async function requestPreAuthorization(
     "requestPreAuthorization",
     async (tx) => {
       const payer = await loadPayer(tx, values.facilityId, values.payerId);
+      await assertValidPayerSharingConsent(tx, {
+        facilityId: values.facilityId,
+        patientId: values.patientId,
+        actor: values.actor,
+        action: "revenue.preauth.share_refused",
+        entity: "pre_authorizations",
+        entityId: null,
+        details: { payerId: payer.id, encounterId: values.encounterId ?? null },
+        sharingAgreementId: values.sharingAgreementId ?? null,
+      });
       const facility = await loadFacilityForNumbering(tx, values.facilityId);
       const authNo = await nextFormattedNumber(tx, facility, "preauth");
       const preAuthId = newId();
@@ -676,6 +688,7 @@ export const createClaimSchema = z.object({
   ...baseSchema,
   payerId: z.uuid(),
   contractId: z.uuid().nullable().optional(),
+  sharingAgreementId: z.uuid().nullable().optional(),
   patientId: z.uuid(),
   encounterId: z.uuid(),
   invoiceId: z.uuid().nullable().optional(),
@@ -726,6 +739,21 @@ export async function createClaim(
       if (encounter.patientId !== values.patientId) {
         throw new Error("The encounter belongs to a different patient");
       }
+
+      await assertValidPayerSharingConsent(tx, {
+        facilityId: values.facilityId,
+        patientId: values.patientId,
+        actor: values.actor,
+        action: "revenue.claim.create_refused",
+        entity: "claims",
+        entityId: null,
+        details: {
+          payerId: payer.id,
+          encounterId: encounter.id,
+          invoiceId: values.invoiceId ?? null,
+        },
+        sharingAgreementId: values.sharingAgreementId ?? null,
+      });
 
       let invoiceId: string | null = null;
       let derivedLines = values.lines;
@@ -877,6 +905,23 @@ export async function transitionClaim(
     async (tx) => {
       const claim = await loadClaim(tx, values.facilityId, values.claimId);
       assertClaimTransition(claim.status, values.to);
+
+      if (values.to === "submitted" || values.to === "resubmitted") {
+        await assertValidPayerSharingConsent(tx, {
+          facilityId: values.facilityId,
+          patientId: claim.patientId,
+          actor: values.actor,
+          action: "revenue.claim.submit_refused",
+          entity: "claims",
+          entityId: claim.id,
+          details: {
+            claimNo: claim.claimNo,
+            payerId: claim.payerId,
+            to: values.to,
+          },
+          sharingAgreementId: null,
+        });
+      }
 
       if (values.to === "paid" && toCents(claim.paidAmount) <= 0) {
         throw new Error("Record a remittance before marking a claim paid");

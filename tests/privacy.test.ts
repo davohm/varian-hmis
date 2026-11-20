@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -25,8 +27,10 @@ import {
   chartAccessLog,
   dataConsents,
   dataSubjectRequests,
+  encounters,
   facilitySettings,
   patients,
+  payers,
   retentionPolicies,
   staffRoleScopes,
   syncOutbox,
@@ -37,11 +41,13 @@ import {
   listConsents,
   listOverdueBreaches,
 } from "../src/server/queries/privacy";
+import { createClaim } from "../src/server/commands/revenue";
 import {
   cleanupTestFacility,
   createTestDatabase,
   deleteTestActor,
   insertTestActor,
+  insertTestBranch,
   insertTestFacility,
   type TestDatabase,
 } from "./helpers";
@@ -75,7 +81,25 @@ async function withFacility<T>(run: (scope: FacilityScope) => Promise<T>): Promi
 
 async function createPatient(
   facilityId: string,
-  overrides: { firstName?: string; lastName?: string; dob?: string; sex?: "male" | "female" | "other" } = {},
+  overrides: {
+    firstName?: string;
+    lastName?: string;
+    dob?: string;
+    sex?: "male" | "female" | "other";
+    nextOfKin?: Array<{ name: string; relationship: string; phone?: string | null }>;
+    minorConsent?: {
+      consentType: "minor";
+      consentVersion: string;
+      granted: true;
+      grantedAt: string;
+      grantedBy: string;
+      source?: string | null;
+      consentTextHash?: string | null;
+      documentId?: string | null;
+      validFrom?: string | null;
+      validTo?: string | null;
+    };
+  } = {},
 ) {
   return registerPatient(
     {
@@ -86,6 +110,8 @@ async function createPatient(
       dob: overrides.dob ?? "1990-01-01",
       sex: overrides.sex ?? "female",
       actor: { userId: "vitest" },
+      nextOfKin: overrides.nextOfKin ?? [],
+      ...(overrides.minorConsent ? { minorConsent: overrides.minorConsent } : {}),
     },
     { database: ctx.db },
   );
@@ -532,20 +558,43 @@ describe("privacy commands and rules", () => {
     });
   });
 
-  it("requires guardian/minor consent for minor treatment", async () => {
+  it("requires guardian/minor consent for minor treatment and minor registration", async () => {
     await withFacility(async ({ facility }) => {
       const userId = await insertTestActor(ctx.db);
-      const minor = await createPatient(facility.id, { dob: "2015-05-01" });
-      const adult = await createPatient(facility.id, { dob: "1990-05-01" });
       try {
+        await expect(
+          createPatient(facility.id, { dob: "2015-05-01" }),
+        ).rejects.toThrow(/guardian|next of kin/i);
+
+        await expect(
+          createPatient(facility.id, {
+            dob: "2015-05-01",
+            nextOfKin: [{ name: "Guardian One", relationship: "Mother", phone: "+254700000001" }],
+          }),
+        ).rejects.toThrow(/guardian consent/i);
+
+        const grantedAt = new Date().toISOString();
+        const minor = await createPatient(facility.id, {
+          dob: "2015-05-01",
+          nextOfKin: [{ name: "Guardian One", relationship: "Mother", phone: "+254700000001" }],
+          minorConsent: {
+            consentType: "minor",
+            consentVersion: "guardian-v1",
+            granted: true,
+            grantedAt,
+            grantedBy: "Guardian One",
+            source: "registration",
+          },
+        });
+        const adult = await createPatient(facility.id, { dob: "1990-05-01" });
+
         await ctx.db.transaction(async (tx) => {
-          await expect(
-            assertMinorTreatmentConsent(tx, {
-              facilityId: facility.id,
-              patientId: minor.patientId,
-              actor: actor(userId),
-            }),
-          ).rejects.toBeInstanceOf(PrivacyRefusalError);
+          const okMinor = await assertMinorTreatmentConsent(tx, {
+            facilityId: facility.id,
+            patientId: minor.patientId,
+            actor: actor(userId),
+          });
+          expect(okMinor).not.toBeNull();
           const okAdult = await assertMinorTreatmentConsent(tx, {
             facilityId: facility.id,
             patientId: adult.patientId,
@@ -553,28 +602,121 @@ describe("privacy commands and rules", () => {
           expect(okAdult).toBeNull();
         });
 
+        const minorConsents = await ctx.db
+          .select()
+          .from(dataConsents)
+          .where(
+            and(
+              eq(dataConsents.facilityId, facility.id),
+              eq(dataConsents.patientId, minor.patientId),
+              eq(dataConsents.consentType, "minor"),
+            ),
+          );
+        expect(minorConsents.length).toBeGreaterThanOrEqual(1);
+
+        const audits = await ctx.db
+          .select()
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.facilityId, facility.id),
+              eq(auditLog.action, "privacy.consent.record"),
+              eq(auditLog.entity, "data_consents"),
+            ),
+          );
+        expect(audits.some((a) => (a.details as Record<string, unknown> | null)?.patientId === minor.patientId)).toBe(true);
+      } finally {
+        await deleteTestActor(ctx.db, userId);
+      }
+    });
+  });
+
+  it("refuses claim creation through revenue without valid payer sharing consent", async () => {
+    await withFacility(async ({ facility }) => {
+      const userId = await insertTestActor(ctx.db);
+      try {
+        await grantScope(userId, facility.id, "admin");
+        const patient = await createPatient(facility.id);
+        const branchId = await insertTestBranch(ctx.db, facility.id);
+        const encounterId = newId();
+        await ctx.db.insert(encounters).values({
+          id: encounterId,
+          facilityId: facility.id,
+          branchId,
+          patientId: patient.patientId,
+          encounterNo: `ENC-${randomUUID().slice(0, 8).toUpperCase()}`,
+          status: "open",
+          payerType: "cash",
+          startedAt: new Date(),
+          createdBy: userId,
+        });
+        const payerId = newId();
+        await ctx.db.insert(payers).values({
+          id: payerId,
+          facilityId: facility.id,
+          code: `PY-${randomUUID().slice(0, 6).toUpperCase()}`,
+          name: "Test Insurer",
+          kind: "insurer",
+          active: true,
+          createdBy: userId,
+        });
+
+        await expect(
+          createClaim(
+            {
+              facilityId: facility.id,
+              idempotencyKey: newIdempotencyKey(),
+              actor: actor(userId),
+              payerId,
+              patientId: patient.patientId,
+              encounterId,
+              lines: [{ description: "Consultation", amount: "500.00" }],
+            },
+            { database: ctx.db },
+          ),
+        ).rejects.toBeInstanceOf(PrivacyRefusalError);
+
+        const refusalAudits = await ctx.db
+          .select()
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.facilityId, facility.id),
+              eq(auditLog.action, "revenue.claim.create_refused"),
+            ),
+          );
+        expect(refusalAudits.length).toBeGreaterThanOrEqual(1);
+
         await recordConsent(
           {
             facilityId: facility.id,
             idempotencyKey: newIdempotencyKey(),
             actor: actor(userId),
-            patientId: minor.patientId,
-            consentType: "minor",
-            consentVersion: "guardian-v1",
+            patientId: patient.patientId,
+            consentType: "payer_sharing",
+            consentVersion: "v1",
             granted: true,
             grantedAt: new Date().toISOString(),
-            grantedBy: "Guardian",
+            grantedBy: "Patient",
           },
           { database: ctx.db },
         );
 
-        await ctx.db.transaction(async (tx) => {
-          const ok = await assertMinorTreatmentConsent(tx, {
+        const claim = await createClaim(
+          {
             facilityId: facility.id,
-            patientId: minor.patientId,
-          });
-          expect(ok).not.toBeNull();
-        });
+            idempotencyKey: newIdempotencyKey(),
+            actor: actor(userId),
+            payerId,
+            patientId: patient.patientId,
+            encounterId,
+            lines: [{ description: "Consultation", amount: "500.00" }],
+          },
+          { database: ctx.db },
+        );
+        expect(claim.status).toBe("draft");
+        expect(claim.lineCount).toBe(1);
+        expect(claim.claimId).toBeTruthy();
       } finally {
         await deleteTestActor(ctx.db, userId);
       }

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
-import { facilities, nextOfKin, patients } from "@/server/db/schema";
+import { dataConsents, facilities, nextOfKin, patients } from "@/server/db/schema";
 import { publishEvent } from "@/server/events";
 import { nextFormattedNumber } from "@/server/numbering";
 import { findPatientDuplicates } from "@/server/queries/patients";
@@ -17,6 +17,19 @@ const nextOfKinSchema = z.object({
   name: z.string().trim().min(1).max(120),
   relationship: z.string().trim().min(1).max(60),
   phone: phoneSchema,
+});
+
+const minorConsentSchema = z.object({
+  consentType: z.literal("minor"),
+  consentVersion: z.string().trim().min(1).max(64),
+  consentTextHash: z.string().trim().max(128).nullable().optional(),
+  granted: z.literal(true),
+  grantedAt: z.string().datetime({ offset: true }).or(z.string().datetime()),
+  grantedBy: z.string().trim().min(1).max(128),
+  source: z.string().trim().max(64).nullable().optional(),
+  documentId: z.uuid().nullable().optional(),
+  validFrom: z.string().datetime({ offset: true }).or(z.string().datetime()).nullable().optional(),
+  validTo: z.string().datetime({ offset: true }).or(z.string().datetime()).nullable().optional(),
 });
 
 export const registerPatientSchema = z
@@ -40,6 +53,7 @@ export const registerPatientSchema = z
     allergies: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
     bloodGroup: z.string().trim().max(8).nullable().optional(),
     nextOfKin: z.array(nextOfKinSchema).max(4).default([]),
+    minorConsent: minorConsentSchema.optional(),
   })
   .superRefine((value, context) => {
     if (!value.dob && value.estimatedAge == null) {
@@ -67,6 +81,13 @@ function dateOfBirthFromAge(age: number): string {
   return `${String(year).padStart(4, "0")}-01-01`;
 }
 
+function isMinorDob(dob: string): boolean {
+  const birth = new Date(`${dob}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime())) return false;
+  const ageMs = Date.now() - birth.getTime();
+  return ageMs / (365.25 * 24 * 60 * 60 * 1000) < 18;
+}
+
 export async function registerPatient(
   input: RegisterPatientInput,
   options: CommandOptions = {},
@@ -74,6 +95,15 @@ export async function registerPatient(
   const values = registerPatientSchema.parse(input);
   const dob = clean(values.dob) ?? (values.estimatedAge != null ? dateOfBirthFromAge(values.estimatedAge) : null);
   if (!dob) throw new Error("Provide a date of birth or an estimated age");
+  const minor = isMinorDob(dob);
+  if (minor) {
+    if (values.nextOfKin.length === 0) {
+      throw new Error("A guardian or next of kin is required when registering a minor");
+    }
+    if (!values.minorConsent || values.minorConsent.consentType !== "minor" || values.minorConsent.granted !== true) {
+      throw new Error("A guardian consent record is required when registering a minor");
+    }
+  }
 
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
@@ -130,6 +160,57 @@ export async function registerPatient(
             createdBy: values.actor.userId ?? null,
           })),
         );
+      }
+
+      if (minor && values.minorConsent) {
+        const consent = values.minorConsent;
+        const insertedConsent = await tx
+          .insert(dataConsents)
+          .values({
+            facilityId: facility.id,
+            patientId,
+            consentType: consent.consentType,
+            consentVersion: consent.consentVersion,
+            consentTextHash: consent.consentTextHash ?? null,
+            granted: consent.granted,
+            grantedAt: new Date(consent.grantedAt),
+            grantedBy: consent.grantedBy,
+            withdrawnAt: null,
+            withdrawnBy: null,
+            source: consent.source ?? "registration",
+            documentId: consent.documentId ?? null,
+            validFrom: consent.validFrom ? new Date(consent.validFrom) : null,
+            validTo: consent.validTo ? new Date(consent.validTo) : null,
+            createdBy: values.actor.userId ?? null,
+          })
+          .returning({ id: dataConsents.id });
+        const consentId = insertedConsent[0]!.id;
+
+        await recordAudit(tx, {
+          facilityId: facility.id,
+          userId: values.actor.userId,
+          action: "privacy.consent.record",
+          module: "privacy",
+          entity: "data_consents",
+          entityId: consentId,
+          details: {
+            patientId,
+            consentType: consent.consentType,
+            consentVersion: consent.consentVersion,
+            granted: consent.granted,
+            recordedAtRegistration: true,
+          },
+          deviceId: values.actor.deviceId,
+          ip: values.actor.ip,
+        });
+
+        await publishEvent(tx, {
+          type: "privacy.consent.recorded",
+          facilityId: facility.id,
+          patientId,
+          consentType: consent.consentType,
+          consentVersion: consent.consentVersion,
+        });
       }
 
       await recordAudit(tx, {
