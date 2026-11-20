@@ -33,7 +33,13 @@ import {
   requestPreAuthorization,
   transitionClaim,
 } from "../src/server/commands/revenue";
-import { encounters, invoices, patients, remittances } from "../src/server/db/schema";
+import {
+  dataConsents,
+  encounters,
+  invoices,
+  patients,
+  remittances,
+} from "../src/server/db/schema";
 import {
   getFinanceOverview,
   getFinancialStatements,
@@ -594,6 +600,20 @@ async function withRevenueFacility<T>(
       total: "5000.00",
       paid: "0.00",
       status: "open",
+      createdBy: "vitest",
+    });
+
+    await ctx.db.insert(dataConsents).values({
+      facilityId: finance.facility.id,
+      patientId,
+      consentType: "payer_sharing",
+      consentVersion: "v1",
+      granted: true,
+      grantedAt: new Date(),
+      grantedBy: "vitest",
+      source: "test",
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validTo: null,
       createdBy: "vitest",
     });
 
