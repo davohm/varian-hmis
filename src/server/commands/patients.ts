@@ -32,6 +32,19 @@ const minorConsentSchema = z.object({
   validTo: z.string().datetime({ offset: true }).or(z.string().datetime()).nullable().optional(),
 });
 
+const treatmentConsentSchema = z.object({
+  consentType: z.literal("treatment"),
+  consentVersion: z.string().trim().min(1).max(64),
+  consentTextHash: z.string().trim().max(128).nullable().optional(),
+  granted: z.literal(true),
+  grantedAt: z.string().datetime({ offset: true }).or(z.string().datetime()),
+  grantedBy: z.string().trim().min(1).max(128),
+  source: z.string().trim().max(64).nullable().optional(),
+  documentId: z.uuid().nullable().optional(),
+  validFrom: z.string().datetime({ offset: true }).or(z.string().datetime()).nullable().optional(),
+  validTo: z.string().datetime({ offset: true }).or(z.string().datetime()).nullable().optional(),
+});
+
 export const registerPatientSchema = z
   .object({
     facilityId: z.uuid(),
@@ -54,6 +67,7 @@ export const registerPatientSchema = z
     bloodGroup: z.string().trim().max(8).nullable().optional(),
     nextOfKin: z.array(nextOfKinSchema).max(4).default([]),
     minorConsent: minorConsentSchema.optional(),
+    treatmentConsent: treatmentConsentSchema.optional(),
   })
   .superRefine((value, context) => {
     if (!value.dob && value.estimatedAge == null) {
@@ -164,6 +178,57 @@ export async function registerPatient(
 
       if (minor && values.minorConsent) {
         const consent = values.minorConsent;
+        const insertedConsent = await tx
+          .insert(dataConsents)
+          .values({
+            facilityId: facility.id,
+            patientId,
+            consentType: consent.consentType,
+            consentVersion: consent.consentVersion,
+            consentTextHash: consent.consentTextHash ?? null,
+            granted: consent.granted,
+            grantedAt: new Date(consent.grantedAt),
+            grantedBy: consent.grantedBy,
+            withdrawnAt: null,
+            withdrawnBy: null,
+            source: consent.source ?? "registration",
+            documentId: consent.documentId ?? null,
+            validFrom: consent.validFrom ? new Date(consent.validFrom) : null,
+            validTo: consent.validTo ? new Date(consent.validTo) : null,
+            createdBy: values.actor.userId ?? null,
+          })
+          .returning({ id: dataConsents.id });
+        const consentId = insertedConsent[0]!.id;
+
+        await recordAudit(tx, {
+          facilityId: facility.id,
+          userId: values.actor.userId,
+          action: "privacy.consent.record",
+          module: "privacy",
+          entity: "data_consents",
+          entityId: consentId,
+          details: {
+            patientId,
+            consentType: consent.consentType,
+            consentVersion: consent.consentVersion,
+            granted: consent.granted,
+            recordedAtRegistration: true,
+          },
+          deviceId: values.actor.deviceId,
+          ip: values.actor.ip,
+        });
+
+        await publishEvent(tx, {
+          type: "privacy.consent.recorded",
+          facilityId: facility.id,
+          patientId,
+          consentType: consent.consentType,
+          consentVersion: consent.consentVersion,
+        });
+      }
+
+      if (values.treatmentConsent) {
+        const consent = values.treatmentConsent;
         const insertedConsent = await tx
           .insert(dataConsents)
           .values({
