@@ -62,6 +62,11 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/admin/regulatory",
     description: "Maintain licences, regulatory identifiers and readiness.",
   },
+  dpo: {
+    label: "Privacy",
+    href: "/admin/privacy",
+    description: "Manage consents, data-subject requests, breaches and chart access.",
+  },
   admin: {
     label: "Administration",
     href: "/admin",
@@ -85,6 +90,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   revenue_cycle_officer: "Revenue Cycle Officer",
   auditor: "Auditor",
   regulatory_officer: "Regulatory Officer",
+  dpo: "Data Protection Officer",
   admin: "Administrator",
 };
 
@@ -101,6 +107,7 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "revenue_cycle_officer",
   "auditor",
   "regulatory_officer",
+  "dpo",
   "admin",
 ];
 

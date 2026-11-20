@@ -17,12 +17,17 @@ import {
   budgets,
   cashierSessions,
   charges,
+  chartAccessLog,
   claimDenials,
   claimLines,
   claims,
   clinicalNotes,
   commandLog,
   costCenters,
+  dataBreaches,
+  dataConsents,
+  dataSharingAgreements,
+  dataSubjectRequests,
   departments,
   diagnoses,
   dispenses,
@@ -60,6 +65,7 @@ import {
   prices,
   queueEntries,
   remittances,
+  retentionPolicies,
   rooms,
   services,
   session,
@@ -73,6 +79,7 @@ import {
   supportServiceLicences,
   syncOutbox,
   syncReceived,
+  transferAssessments,
   triageVitals,
   user,
 } from "../src/server/db/schema";
@@ -217,6 +224,9 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
     await tx.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
     await tx.delete(encounters).where(eq(encounters.facilityId, facilityId));
+    await tx.delete(chartAccessLog).where(eq(chartAccessLog.facilityId, facilityId));
+    await tx.delete(dataSubjectRequests).where(eq(dataSubjectRequests.facilityId, facilityId));
+    await tx.delete(dataConsents).where(eq(dataConsents.facilityId, facilityId));
     await tx.delete(nextOfKin).where(eq(nextOfKin.facilityId, facilityId));
     await tx.delete(patients).where(eq(patients.facilityId, facilityId));
     await tx.delete(auditLog).where(eq(auditLog.facilityId, facilityId));
@@ -229,6 +239,10 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
     await tx.delete(syncReceived).where(eq(syncReceived.facilityId, facilityId));
     await tx.delete(facilitySyncTokens).where(eq(facilitySyncTokens.facilityId, facilityId));
+    await tx.delete(dataBreaches).where(eq(dataBreaches.facilityId, facilityId));
+    await tx.delete(retentionPolicies).where(eq(retentionPolicies.facilityId, facilityId));
+    await tx.delete(dataSharingAgreements).where(eq(dataSharingAgreements.facilityId, facilityId));
+    await tx.delete(transferAssessments).where(eq(transferAssessments.facilityId, facilityId));
     // Licence renewals reference the licence they replace.
     await tx
       .update(facilityLicences)

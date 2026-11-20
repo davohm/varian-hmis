@@ -6,6 +6,7 @@ export const ADMIN_SECTIONS = [
   "audit",
   "sync",
   "regulatory",
+  "privacy",
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
@@ -51,6 +52,11 @@ export const ADMIN_SECTION_META: Record<AdminSection, AdminSectionMeta> = {
     label: "Regulatory",
     description: "Licences, regulatory identifiers, readiness and statutory settings.",
     href: "/admin/regulatory",
+  },
+  privacy: {
+    label: "Privacy",
+    description: "Consents, data-subject requests, breaches, retention and chart access.",
+    href: "/admin/privacy",
   },
 };
 

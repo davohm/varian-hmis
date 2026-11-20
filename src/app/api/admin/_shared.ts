@@ -44,6 +44,21 @@ export async function requireRegulatoryAccess() {
   return { ...context, sections };
 }
 
+/** Data protection officers reach only `/admin/privacy`; administrators keep everything. */
+export async function requirePrivacyAccess() {
+  const context = await requireApiFacility(["admin", "dpo"]);
+  const isAdmin = context.staff.scopes.some(
+    (scope) => scope.facilityId === context.facilityId && scope.role === "admin",
+  );
+  const sections = isAdmin
+    ? await getAdminSections(context.staff.user.id, context.facilityId)
+    : (["privacy"] as AdminSection[]);
+  if (!sections.includes("privacy")) {
+    throw new ForbiddenError("You do not have access to the privacy section.");
+  }
+  return { ...context, sections };
+}
+
 type AdminAccessContext = Awaited<ReturnType<typeof requireAdminAccess>>;
 
 type AdminCommand = (input: Record<string, unknown>) => Promise<unknown>;

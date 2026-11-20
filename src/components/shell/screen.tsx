@@ -221,6 +221,23 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       icon: ScrollText,
     },
   ],
+  dpo: [
+    {
+      label: "Privacy inbox",
+      description: "Review consents, data-subject requests and breaches.",
+      icon: ShieldCheck,
+    },
+    {
+      label: "Chart access",
+      description: "Inspect chart access history and restricted records.",
+      icon: ScrollText,
+    },
+    {
+      label: "Retention and sharing",
+      description: "Track retention, sharing agreements and transfers.",
+      icon: FileSignature,
+    },
+  ],
   admin: [
     {
       label: "Staff and roles",

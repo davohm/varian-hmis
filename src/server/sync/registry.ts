@@ -35,6 +35,13 @@ export const SYNC_OUTBOUND_TABLES = [
   "cashier_sessions",
   "audit_log",
   "number_sequences",
+  "data_consents",
+  "data_subject_requests",
+  "data_breaches",
+  "retention_policies",
+  "data_sharing_agreements",
+  "transfer_assessments",
+  "chart_access_log",
 ] as const;
 
 export const SYNC_INBOUND_TABLES = [
@@ -57,6 +64,7 @@ export const SYNC_APPEND_ONLY_TABLES = [
   "dispenses",
   "payments",
   "stock_ledger",
+  "chart_access_log",
 ] as const;
 
 export const SYNC_BUSINESS_KEY_TABLES = {

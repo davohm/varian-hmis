@@ -32,6 +32,7 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   revenue_cycle_officer: Receipt,
   auditor: ShieldCheck,
   regulatory_officer: ShieldCheck,
+  dpo: ShieldCheck,
   admin: ShieldCheck,
 };
 

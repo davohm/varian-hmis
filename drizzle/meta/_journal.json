@@ -106,6 +106,13 @@
       "when": 1795131836323,
       "tag": "0014_opposite_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1795179695438,
+      "tag": "0015_ambiguous_vision",
+      "breakpoints": true
     }
   ]
 }
