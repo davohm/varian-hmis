@@ -5,6 +5,7 @@ export * from "./finance";
 export * from "./patients";
 export * from "./privacy";
 export * from "./regulatory";
+export * from "./reporting";
 export * from "./revenue";
 export * from "./staff";
 export * from "./sync";
