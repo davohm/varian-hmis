@@ -24,6 +24,9 @@ import { Label } from "@/components/ui/label";
 import { LoadingPanel } from "@/components/ui/loading-panel";
 import { cn } from "cn";
 
+import { PrivacyPanel } from "./privacy-panel";
+import { RegulatoryPanel } from "./regulatory-panel";
+
 export type Row = { id: string; active?: boolean; isActive?: boolean };
 
 interface FacilityRow extends Row {
@@ -1444,6 +1447,8 @@ export function AdminWorkspace({ section }: { section: AdminSection }) {
         {section === "prices" ? <PriceListsPanel overview={overview} busy={busy} run={run} /> : null}
         {section === "audit" ? <AuditPanel /> : null}
         {section === "sync" ? <SyncPanel /> : null}
+        {section === "regulatory" ? <RegulatoryPanel /> : null}
+        {section === "privacy" ? <PrivacyPanel /> : null}
       </div>
     </div>
   );
