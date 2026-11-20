@@ -13,6 +13,8 @@ import {
   bankReconciliations,
   bankTransactions,
   branches,
+  budgetLines,
+  budgets,
   cashierSessions,
   charges,
   claimDenials,
@@ -189,6 +191,8 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(bankAccounts).where(eq(bankAccounts.facilityId, facilityId));
     await tx.delete(journalLines).where(eq(journalLines.facilityId, facilityId));
     await tx.delete(journalEntries).where(eq(journalEntries.facilityId, facilityId));
+    await tx.delete(budgetLines).where(eq(budgetLines.facilityId, facilityId));
+    await tx.delete(budgets).where(eq(budgets.facilityId, facilityId));
     await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
     await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));
     await tx.delete(ledgerAccounts).where(eq(ledgerAccounts.facilityId, facilityId));

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, exists, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
 
 import { assertBalancedJournal, fiscalYearFor } from "@/lib/finance";
 import { fromCents, toCents } from "@/lib/billing";
@@ -6,6 +6,8 @@ import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
 import type { CommandTransaction } from "@/server/commands/run";
 import {
+  budgetLines,
+  budgets,
   costCenters,
   facilities,
   fiscalPeriods,
@@ -81,17 +83,26 @@ export async function resolveSystemAccount(
  * period for that fiscal year, the calendar year is opened automatically so a
  * clinic cannot lose a day's takings because an accountant is on leave.
  */
+export interface OpenPeriod {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+}
+
 export async function ensureOpenPeriod(
   tx: CommandTransaction,
   facilityId: string,
   entryDate: string,
   userId?: string | null,
-): Promise<{ id: string; name: string }> {
+): Promise<OpenPeriod> {
   const covering = await tx
     .select({
       id: fiscalPeriods.id,
       name: fiscalPeriods.name,
       status: fiscalPeriods.status,
+      startDate: fiscalPeriods.startDate,
+      endDate: fiscalPeriods.endDate,
     })
     .from(fiscalPeriods)
     .where(
@@ -109,7 +120,7 @@ export async function ensureOpenPeriod(
     if (period.status !== "open") {
       throw new Error(`Fiscal period ${period.name} is closed; post to an open period`);
     }
-    return period;
+    return { id: period.id, name: period.name, startDate: period.startDate, endDate: period.endDate };
   }
 
   const year = fiscalYearFor(entryDate);
@@ -134,7 +145,7 @@ export async function ensureOpenPeriod(
     status: "open",
     createdBy: userId ?? null,
   });
-  return { id, name: year.name };
+  return { id, name: year.name, startDate: year.startDate, endDate: year.endDate };
 }
 
 async function assertAccountsBelongToFacility(
@@ -166,6 +177,96 @@ async function assertCostCentersBelongToFacility(
     .where(and(eq(costCenters.facilityId, facilityId), inArray(costCenters.id, costCenterIds)));
   if (rows.length !== new Set(costCenterIds).size) {
     throw new Error("Every cost centre must belong to this facility");
+  }
+}
+
+/**
+ * Approved, enforced budgets are a hard posting control. A budget line only
+ * applies when its account, cost centre and fiscal period match the posting;
+ * facilities without a matching budget keep the previous unrestricted flow.
+ */
+export async function assertBudgetAvailability(
+  tx: CommandTransaction,
+  facilityId: string,
+  period: OpenPeriod,
+  lines: Array<{ accountId?: string | null; debit: string; costCenterId?: string | null }>,
+) {
+  const candidates = lines.filter(
+    (line) => line.accountId && toCents(line.debit) > 0,
+  ) as Array<{ accountId: string; debit: string; costCenterId?: string | null }>;
+  if (candidates.length === 0) return;
+
+  const accountRows = await tx
+    .select({ id: ledgerAccounts.id, code: ledgerAccounts.code, type: ledgerAccounts.type })
+    .from(ledgerAccounts)
+    .where(
+      and(
+        eq(ledgerAccounts.facilityId, facilityId),
+        inArray(
+          ledgerAccounts.id,
+          [...new Set(candidates.map((line) => line.accountId))],
+        ),
+      ),
+    );
+  const accountById = new Map(accountRows.map((account) => [account.id, account]));
+  const expenseLines = candidates.filter((line) => accountById.get(line.accountId)?.type === "expense");
+  if (expenseLines.length === 0) return;
+
+  for (const line of expenseLines) {
+    const budgetConditions: SQL[] = [
+      eq(budgetLines.facilityId, facilityId),
+      eq(budgetLines.accountId, line.accountId),
+      eq(budgets.periodId, period.id),
+      eq(budgets.status, "approved"),
+      eq(budgets.enforce, true),
+      sql`${budgetLines.costCenterId} is not distinct from ${line.costCenterId ?? null}`,
+      sql`(${budgets.costCenterId} is null or ${budgets.costCenterId} = ${line.costCenterId ?? null})`,
+      line.costCenterId
+        ? sql`(${budgets.branchId} is null or ${exists(
+            tx
+              .select({ id: costCenters.id })
+              .from(costCenters)
+              .where(
+                and(
+                  eq(costCenters.facilityId, facilityId),
+                  eq(costCenters.id, line.costCenterId),
+                  eq(costCenters.branchId, budgets.branchId),
+                ),
+              ),
+          )})`
+        : isNull(budgets.branchId),
+    ];
+    const covering = await tx
+      .select({ amount: budgetLines.amount })
+      .from(budgetLines)
+      .innerJoin(budgets, eq(budgetLines.budgetId, budgets.id))
+      .where(and(...budgetConditions));
+    if (covering.length === 0) continue;
+
+    const budgetCents = covering.reduce((total, row) => total + toCents(row.amount), 0);
+    const actualConditions = [
+      eq(journalLines.facilityId, facilityId),
+      eq(journalLines.accountId, line.accountId),
+      gte(journalEntries.entryDate, period.startDate),
+      lte(journalEntries.entryDate, period.endDate),
+      line.costCenterId
+        ? eq(journalLines.costCenterId, line.costCenterId)
+        : isNull(journalLines.costCenterId),
+    ];
+    const actualRows = await tx
+      .select({
+        total: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+      })
+      .from(journalLines)
+      .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+      .where(and(...actualConditions));
+    const actualCents = toCents(actualRows[0]?.total ?? 0);
+    if (actualCents + toCents(line.debit) > budgetCents) {
+      const account = accountById.get(line.accountId);
+      throw new Error(
+        `Posting would exceed the approved budget for ${account?.code ?? "this account"} in ${period.name}`,
+      );
+    }
   }
 }
 
@@ -216,6 +317,7 @@ export async function postJournal(
   );
 
   const period = await ensureOpenPeriod(tx, input.facilityId, input.entryDate, input.userId);
+  await assertBudgetAvailability(tx, input.facilityId, period, resolved);
 
   const facilityRows = await tx
     .select({ id: facilities.id, code: facilities.code })

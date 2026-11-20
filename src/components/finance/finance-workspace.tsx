@@ -245,6 +245,9 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
           >
             Financial statements
           </Link>
+          <Link href="/finance/budgets" className="font-medium text-primary underline" data-testid="finance-link-budgets">
+            Budgets &amp; controls
+          </Link>
           <Link href="/finance/revenue" className="font-medium text-primary underline">
             Revenue cycle
           </Link>

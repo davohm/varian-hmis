@@ -557,6 +557,9 @@ export function FinancialStatementsWorkspace() {
           <Link href="/finance" className="font-medium text-primary underline" data-testid="statements-link-finance">
             Finance workspace
           </Link>
+          <Link href="/finance/budgets" className="font-medium text-primary underline" data-testid="statements-link-budgets">
+            Budgets &amp; controls
+          </Link>
           <Link href="/finance/revenue" className="font-medium text-primary underline">
             Revenue cycle
           </Link>

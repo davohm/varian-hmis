@@ -33,6 +33,16 @@ export type FiscalPeriodStatus = (typeof FISCAL_PERIOD_STATUSES)[number];
 export const JOURNAL_STATUSES = ["posted", "reversed"] as const;
 export type JournalStatus = (typeof JOURNAL_STATUSES)[number];
 
+export const BUDGET_STATUSES = ["draft", "submitted", "approved", "rejected"] as const;
+export type BudgetStatus = (typeof BUDGET_STATUSES)[number];
+
+export const BUDGET_STATUS_LABELS: Record<BudgetStatus, string> = {
+  draft: "Draft",
+  submitted: "Awaiting approval",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
 export interface JournalLineInput {
   debit: string | number;
   credit: string | number;

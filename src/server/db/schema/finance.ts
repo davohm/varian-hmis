@@ -38,6 +38,13 @@ export const bankReconciliationStatusEnum = pgEnum("bank_reconciliation_status",
   "completed",
 ]);
 
+export const budgetStatusEnum = pgEnum("budget_status", [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+]);
+
 /**
  * Chart of accounts. `system_role` lets automation (invoice revenue, payments)
  * resolve the correct account without hard-coding a code. At most one active
@@ -305,6 +312,77 @@ export const bankTransactions = pgTable(
   }),
 );
 
+/**
+ * Expense budgets are versioned per fiscal period. Only approved budgets with
+ * enforcement enabled constrain posting; draft and submitted budgets are
+ * planning records and never block a journal.
+ */
+export const budgets = pgTable(
+  "budgets",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    periodId: uuid("period_id")
+      .notNull()
+      .references(() => fiscalPeriods.id, { onDelete: "restrict" }),
+    branchId: uuid("branch_id").references(() => branches.id, { onDelete: "restrict" }),
+    costCenterId: uuid("cost_center_id").references(() => costCenters.id, {
+      onDelete: "restrict",
+    }),
+    code: varchar("code", { length: 32 }).notNull(),
+    name: text("name").notNull(),
+    status: budgetStatusEnum("status").notNull().default("draft"),
+    currency: varchar("currency", { length: 8 }).notNull().default("KES"),
+    enforce: boolean("enforce").notNull().default(true),
+    note: text("note"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    submittedBy: text("submitted_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedBy: text("approved_by"),
+    rejectedReason: text("rejected_reason"),
+    updatedBy: text("updated_by"),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityCodeIdx: uniqueIndex("budgets_facility_code_idx").on(table.facilityId, table.code),
+    facilityPeriodIdx: index("budgets_facility_period_idx").on(table.facilityId, table.periodId),
+    facilityStatusIdx: index("budgets_facility_status_idx").on(table.facilityId, table.status),
+  }),
+);
+
+export const budgetLines = pgTable(
+  "budget_lines",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    budgetId: uuid("budget_id")
+      .notNull()
+      .references(() => budgets.id, { onDelete: "restrict" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => ledgerAccounts.id, { onDelete: "restrict" }),
+    costCenterId: uuid("cost_center_id").references(() => costCenters.id, {
+      onDelete: "restrict",
+    }),
+    amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+    description: text("description"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    budgetAccountIdx: uniqueIndex("budget_lines_budget_account_idx").on(
+      table.budgetId,
+      table.accountId,
+      table.costCenterId,
+    ),
+    facilityIdx: index("budget_lines_facility_idx").on(table.facilityId),
+  }),
+);
+
 export type LedgerAccount = typeof ledgerAccounts.$inferSelect;
 export type NewLedgerAccount = typeof ledgerAccounts.$inferInsert;
 export type CostCenter = typeof costCenters.$inferSelect;
@@ -321,3 +399,7 @@ export type BankReconciliation = typeof bankReconciliations.$inferSelect;
 export type NewBankReconciliation = typeof bankReconciliations.$inferInsert;
 export type BankTransaction = typeof bankTransactions.$inferSelect;
 export type NewBankTransaction = typeof bankTransactions.$inferInsert;
+export type Budget = typeof budgets.$inferSelect;
+export type NewBudget = typeof budgets.$inferInsert;
+export type BudgetLine = typeof budgetLines.$inferSelect;
+export type NewBudgetLine = typeof budgetLines.$inferInsert;
