@@ -9,11 +9,13 @@ import {
   type PaymentMethod,
   type ReceiptData,
 } from "@/lib/billing";
+import { isConsentValid, PATIENT_RESTRICTION_ENTITY } from "@/lib/privacy";
 import { db } from "@/server/db/client";
 import {
   branches,
   cashierSessions,
   charges,
+  dataConsents,
   encounters,
   facilities,
   invoices,
@@ -21,6 +23,7 @@ import {
   payments,
   priceLists,
   prices,
+  retentionPolicies,
   user,
 } from "@/server/db/schema";
 
@@ -33,6 +36,58 @@ function escapeLike(value: string): string {
 function iso(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
   return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function isMinorDob(dob: string | null | undefined, onDate: Date = new Date()): boolean {
+  if (!dob) return false;
+  const birth = new Date(`${dob}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime())) return false;
+  const ageMs = onDate.getTime() - birth.getTime();
+  return ageMs / (365.25 * 24 * 60 * 60 * 1000) < 18;
+}
+
+async function getEncounterPrivacyStatus(
+  database: BillingDatabase,
+  facilityId: string,
+  patientId: string,
+  dob: string | null,
+): Promise<EncounterPrivacyStatus> {
+  const [restrictionRows, consentRows] = await Promise.all([
+    database
+      .select({ id: retentionPolicies.id })
+      .from(retentionPolicies)
+      .where(
+        and(
+          eq(retentionPolicies.facilityId, facilityId),
+          eq(retentionPolicies.entity, PATIENT_RESTRICTION_ENTITY),
+          eq(retentionPolicies.triggerEvent, patientId),
+          eq(retentionPolicies.legalHold, true),
+        ),
+      )
+      .limit(1),
+    database
+      .select({
+        granted: dataConsents.granted,
+        withdrawnAt: dataConsents.withdrawnAt,
+        validFrom: dataConsents.validFrom,
+        validTo: dataConsents.validTo,
+      })
+      .from(dataConsents)
+      .where(
+        and(
+          eq(dataConsents.facilityId, facilityId),
+          eq(dataConsents.patientId, patientId),
+          eq(dataConsents.consentType, isMinorDob(dob) ? "minor" : "treatment"),
+        ),
+      ),
+  ]);
+
+  const restricted = restrictionRows.length > 0;
+  if (restricted) {
+    return { restricted: true, consentStatus: "restricted" };
+  }
+  const hasCurrent = consentRows.some((row) => isConsentValid(row));
+  return { restricted: false, consentStatus: hasCurrent ? "current" : "missing" };
 }
 
 function patientName(firstName: string, lastName: string): string {
@@ -225,6 +280,13 @@ export interface BillInvoiceView {
   voidedBy: string | null;
 }
 
+export type EncounterConsentStatus = "current" | "missing" | "restricted";
+
+export interface EncounterPrivacyStatus {
+  restricted: boolean;
+  consentStatus: EncounterConsentStatus;
+}
+
 export interface EncounterBill {
   encounterId: string;
   encounterNo: string;
@@ -242,6 +304,7 @@ export interface EncounterBill {
   payments: BillPaymentView[];
   unbilledTotal: string;
   outstanding: string;
+  privacy: EncounterPrivacyStatus;
 }
 
 async function loadPayments(
@@ -385,6 +448,8 @@ export async function getEncounterBill(
       .reduce((total, row) => total + toCents(row.amount), 0),
   );
 
+  const privacy = await getEncounterPrivacyStatus(database, facilityId, encounter.patientId, encounter.dob);
+
   return {
     encounterId: encounter.encounterId,
     encounterNo: encounter.encounterNo,
@@ -414,6 +479,7 @@ export async function getEncounterBill(
     outstanding: fromCents(
       Math.max(0, toCents(invoice?.total ?? "0") + toCents(unbilledTotal) - toCents(invoice?.paid ?? "0")),
     ),
+    privacy,
   };
 }
 

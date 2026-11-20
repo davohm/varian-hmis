@@ -338,6 +338,12 @@ export function DoctorWorkspace() {
   const [selected, setSelected] = useState<QueueEntry | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [restrictedAccess, setRestrictedAccess] = useState<{
+    encounterId: string;
+    message: string;
+    privacy: NonNullable<Detail["privacy"]>;
+  } | null>(null);
+  const [accessReason, setAccessReason] = useState("");
   const [catalog, setCatalog] = useState<{ labTests: LabTestOption[]; drugs: DrugOption[] }>({
     labTests: [],
     drugs: [],
@@ -393,15 +399,34 @@ export function DoctorWorkspace() {
     delete keysRef.current[scope];
   }
 
-  const loadDetail = useCallback(async (encounterId: string) => {
+  const loadDetail = useCallback(async (encounterId: string, reason?: string) => {
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/doctor/encounter/${encounterId}`, { cache: "no-store" });
+      const query = reason ? `?reason=${encodeURIComponent(reason)}` : "";
+      const response = await fetch(`/api/doctor/encounter/${encounterId}${query}`, { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as
+        | (Detail & { error?: string; code?: string; privacy?: Detail["privacy"] })
+        | { error?: string; code?: string; privacy?: Detail["privacy"] }
+        | null;
       if (!response.ok) {
+        if (response.status === 403 && payload?.code === "chart_access_reason_required") {
+          setDetail(null);
+          setRestrictedAccess({
+            encounterId,
+            message:
+              payload.error ?? "A reason is required to access this restricted patient chart",
+            privacy: payload.privacy ?? { restricted: true, consentStatus: "restricted" },
+          });
+          setAccessReason("");
+          return;
+        }
         setDetail(null);
+        setRestrictedAccess(null);
         return;
       }
-      setDetail((await response.json()) as Detail);
+      setRestrictedAccess(null);
+      setAccessReason("");
+      setDetail(payload as Detail);
     } finally {
       setDetailLoading(false);
     }
@@ -417,6 +442,8 @@ export function DoctorWorkspace() {
       if (current && !data.entries.some((entry) => entry.id === current.id)) {
         setSelected(null);
         setDetail(null);
+        setRestrictedAccess(null);
+        setAccessReason("");
       }
     } finally {
       setLoading(false);
@@ -527,6 +554,8 @@ export function DoctorWorkspace() {
   async function selectPatient(entry: QueueEntry) {
     setSelected(entry);
     setDetail(null);
+    setRestrictedAccess(null);
+    setAccessReason("");
     setSoap({ subjective: "", objective: "", assessment: "", plan: "" });
     setSoapDirty(false);
     setSelectedIcd(null);
@@ -938,6 +967,35 @@ export function DoctorWorkspace() {
                   <Badge variant="outline" className="capitalize">
                     {selected.payerType}
                   </Badge>
+                  {(() => {
+                    const privacy =
+                      detail?.privacy ??
+                      (restrictedAccess?.encounterId === selected.encounterId
+                        ? restrictedAccess.privacy
+                        : null);
+                    if (!privacy) return null;
+                    const label =
+                      privacy.consentStatus === "restricted"
+                        ? "Consent: Restricted"
+                        : privacy.consentStatus === "current"
+                          ? "Consent: current"
+                          : "Consent: missing";
+                    const style =
+                      privacy.consentStatus === "restricted"
+                        ? "border-[var(--status-critical)] bg-[var(--status-critical-background)] text-[var(--status-critical-foreground)]"
+                        : privacy.consentStatus === "current"
+                          ? "border-[var(--status-normal)] bg-[var(--status-normal-background)] text-[var(--status-normal-foreground)]"
+                          : "border-[var(--status-warning)] bg-[var(--status-warning-background)] text-[var(--status-warning-foreground)]";
+                    return (
+                      <Badge
+                        variant="outline"
+                        data-testid="doctor-consent-status"
+                        className={cn("font-medium", style)}
+                      >
+                        {label}
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </div>
               <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -976,6 +1034,43 @@ export function DoctorWorkspace() {
 
             {detailLoading && !detail ? (
               <p className="px-1 text-sm text-muted-foreground">Loading consultation…</p>
+            ) : null}
+
+            {restrictedAccess?.encounterId === selected.encounterId && !detail ? (
+              <SectionCard
+                title="Restricted chart access"
+                description={restrictedAccess.message}
+                testId="doctor-restricted-access"
+              >
+                <form
+                  className="flex flex-col gap-3 sm:flex-row sm:items-end"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const reason = accessReason.trim();
+                    if (!reason) return;
+                    void loadDetail(selected.encounterId, reason);
+                  }}
+                >
+                  <div className="flex-1">
+                    <Label htmlFor="doctor-access-reason">Reason for access</Label>
+                    <Input
+                      id="doctor-access-reason"
+                      data-testid="doctor-access-reason"
+                      value={accessReason}
+                      onChange={(event) => setAccessReason(event.target.value)}
+                      placeholder="e.g. Treating clinician – ongoing care"
+                      required
+                      autoComplete="off"
+                    />
+                  </div>
+                  <Button type="submit" data-testid="doctor-access-reason-submit">
+                    Continue
+                  </Button>
+                </form>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Access to restricted charts is recorded with your reason.
+                </p>
+              </SectionCard>
             ) : null}
 
             {detail?.vitals ? (

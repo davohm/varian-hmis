@@ -48,7 +48,11 @@ export async function GET(
     if (restrictedRows[0]) {
       if (!reason) {
         return NextResponse.json(
-          { error: "A reason is required to access this restricted patient chart", code: "chart_access_reason_required" },
+          {
+            error: "A reason is required to access this restricted patient chart",
+            code: "chart_access_reason_required",
+            privacy: { restricted: true, consentStatus: "restricted" },
+          },
           { status: 403 },
         );
       }

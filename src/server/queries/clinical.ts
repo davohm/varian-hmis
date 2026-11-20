@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
+import { isConsentValid, PATIENT_RESTRICTION_ENTITY } from "@/lib/privacy";
 import { db } from "@/server/db/client";
 import {
   clinicalNotes,
+  dataConsents,
   diagnoses,
   encounters,
   icd10Codes,
@@ -13,6 +15,7 @@ import {
   labTests,
   patients,
   prescriptions,
+  retentionPolicies,
   triageVitals,
 } from "@/server/db/schema";
 
@@ -244,6 +247,13 @@ export interface HistoryEntry {
   plan: string | null;
 }
 
+export type EncounterConsentStatus = "current" | "missing" | "restricted";
+
+export interface EncounterPrivacyStatus {
+  restricted: boolean;
+  consentStatus: EncounterConsentStatus;
+}
+
 export interface EncounterClinicalDetail {
   patient: EncounterPatient;
   vitals: TriageSummary | null;
@@ -252,11 +262,64 @@ export interface EncounterClinicalDetail {
   labOrders: LabOrderView[];
   prescriptions: PrescriptionView[];
   history: HistoryEntry[];
+  privacy: EncounterPrivacyStatus;
 }
 
 function iso(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
   return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function isMinorDob(dob: string | null | undefined, onDate: Date = new Date()): boolean {
+  if (!dob) return false;
+  const birth = new Date(`${dob}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime())) return false;
+  const ageMs = onDate.getTime() - birth.getTime();
+  return ageMs / (365.25 * 24 * 60 * 60 * 1000) < 18;
+}
+
+async function getEncounterPrivacyStatus(
+  database: ClinicalDatabase,
+  facilityId: string,
+  patientId: string,
+  dob: string | null,
+): Promise<EncounterPrivacyStatus> {
+  const [restrictionRows, consentRows] = await Promise.all([
+    database
+      .select({ id: retentionPolicies.id })
+      .from(retentionPolicies)
+      .where(
+        and(
+          eq(retentionPolicies.facilityId, facilityId),
+          eq(retentionPolicies.entity, PATIENT_RESTRICTION_ENTITY),
+          eq(retentionPolicies.triggerEvent, patientId),
+          eq(retentionPolicies.legalHold, true),
+        ),
+      )
+      .limit(1),
+    database
+      .select({
+        granted: dataConsents.granted,
+        withdrawnAt: dataConsents.withdrawnAt,
+        validFrom: dataConsents.validFrom,
+        validTo: dataConsents.validTo,
+      })
+      .from(dataConsents)
+      .where(
+        and(
+          eq(dataConsents.facilityId, facilityId),
+          eq(dataConsents.patientId, patientId),
+          eq(dataConsents.consentType, isMinorDob(dob) ? "minor" : "treatment"),
+        ),
+      ),
+  ]);
+
+  const restricted = restrictionRows.length > 0;
+  if (restricted) {
+    return { restricted: true, consentStatus: "restricted" };
+  }
+  const hasCurrent = consentRows.some((row) => isConsentValid(row));
+  return { restricted: false, consentStatus: hasCurrent ? "current" : "missing" };
 }
 
 /**
@@ -517,6 +580,8 @@ export async function getEncounterClinicalDetail(
     }
   }
 
+  const privacy = await getEncounterPrivacyStatus(database, facilityId, encounter.patientId, encounter.dob);
+
   return {
     patient: {
       id: encounter.patientId,
@@ -607,5 +672,6 @@ export async function getEncounterClinicalDetail(
         plan: entryNote?.plan ?? null,
       };
     }),
+    privacy,
   };
 }

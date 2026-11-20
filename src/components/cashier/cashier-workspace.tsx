@@ -75,6 +75,17 @@ class SessionMismatchError extends Error {
   }
 }
 
+class ChartAccessRequiredError extends Error {
+  code = "chart_access_reason_required" as const;
+  privacy?: EncounterBill["privacy"];
+
+  constructor(message: string, privacy?: EncounterBill["privacy"]) {
+    super(message);
+    this.name = "ChartAccessRequiredError";
+    this.privacy = privacy;
+  }
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   if (!response.ok) {
@@ -82,12 +93,17 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       error?: string;
       detail?: string;
       issues?: Array<{ message?: string }>;
+      code?: string;
+      privacy?: EncounterBill["privacy"];
     } | null;
     const message =
       detail?.issues?.[0]?.message ??
       detail?.detail ??
       detail?.error ??
       `Request failed (${response.status})`;
+    if (response.status === 403 && detail?.code === "chart_access_reason_required") {
+      throw new ChartAccessRequiredError(message, detail?.privacy);
+    }
     if (response.status === 401 || response.status === 403) {
       throw new SessionMismatchError(message);
     }
@@ -168,6 +184,12 @@ export function CashierWorkspace() {
   const [queueLoading, setQueueLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [bill, setBill] = useState<EncounterBill | null>(null);
+  const [restrictedAccess, setRestrictedAccess] = useState<{
+    encounterId: string;
+    message: string;
+    privacy?: EncounterBill["privacy"];
+  } | null>(null);
+  const [accessReason, setAccessReason] = useState("");
   const [tenders, setTenders] = useState<TenderRow[]>([
     { method: "cash", amount: "", reference: "" },
   ]);
@@ -223,14 +245,29 @@ export function CashierWorkspace() {
     }
   }, [debouncedSearch]);
 
-  const loadBill = useCallback(async (encounterId: string) => {
+  const loadBill = useCallback(async (encounterId: string, reason?: string) => {
     try {
+      const query = reason ? `?reason=${encodeURIComponent(reason)}` : "";
       const data = await requestJson<EncounterBill>(
-        `/api/cashier/encounters/${encounterId}`,
+        `/api/cashier/encounters/${encounterId}${query}`,
       );
       setBill(data);
-    } catch {
+      setRestrictedAccess(null);
+      setAccessReason("");
+    } catch (error) {
+      if (error instanceof ChartAccessRequiredError) {
+        setBill(null);
+        setRestrictedAccess({
+          encounterId,
+          message: error.message,
+          privacy: error.privacy,
+        });
+        setAccessReason("");
+        return;
+      }
+      if (await handleSessionMismatch(error)) return;
       setBill(null);
+      setRestrictedAccess(null);
     }
   }, []);
 
@@ -339,6 +376,8 @@ export function CashierWorkspace() {
     setReverseReason("");
     setPaymentNote("");
     setTenders([{ method: "cash", amount: "", reference: "" }]);
+    setRestrictedAccess(null);
+    setAccessReason("");
     void loadBill(entry.encounterId);
   }
 
@@ -792,11 +831,75 @@ export function CashierWorkspace() {
 
           <div className="space-y-4">
             {!bill ? (
-              <section className={cn(CARD_CLASS, "p-6")}>
-                <p className="text-sm text-muted-foreground">
-                  Select a visit to review its charges, raise an invoice and take payment.
-                </p>
-              </section>
+              restrictedAccess?.encounterId === selectedId ? (
+                <section className={cn(CARD_CLASS, "p-4")} data-testid="cashier-restricted-access">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold">Restricted chart access</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">{restrictedAccess.message}</p>
+                    </div>
+                    {(() => {
+                      const privacy = restrictedAccess.privacy;
+                      if (!privacy) return null;
+                      const label =
+                        privacy.consentStatus === "restricted"
+                          ? "Consent: Restricted"
+                          : privacy.consentStatus === "current"
+                            ? "Consent: current"
+                            : "Consent: missing";
+                      const style =
+                        privacy.consentStatus === "restricted"
+                          ? "border-[var(--status-critical)] bg-[var(--status-critical-background)] text-[var(--status-critical-foreground)]"
+                          : privacy.consentStatus === "current"
+                            ? "border-[var(--status-normal)] bg-[var(--status-normal-background)] text-[var(--status-normal-foreground)]"
+                            : "border-[var(--status-warning)] bg-[var(--status-warning-background)] text-[var(--status-warning-foreground)]";
+                      return (
+                        <Badge
+                          variant="outline"
+                          data-testid="cashier-consent-status"
+                          className={cn("font-medium", style)}
+                        >
+                          {label}
+                        </Badge>
+                      );
+                    })()}
+                  </div>
+                  <form
+                    className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const reason = accessReason.trim();
+                      if (!reason || !selectedId) return;
+                      void loadBill(selectedId, reason);
+                    }}
+                  >
+                    <div className="flex-1">
+                      <Label htmlFor="cashier-access-reason">Reason for access</Label>
+                      <Input
+                        id="cashier-access-reason"
+                        data-testid="cashier-access-reason"
+                        value={accessReason}
+                        onChange={(event) => setAccessReason(event.target.value)}
+                        placeholder="e.g. Billing staff – payment processing"
+                        required
+                        autoComplete="off"
+                      />
+                    </div>
+                    <Button type="submit" data-testid="cashier-access-reason-submit">
+                      Continue
+                    </Button>
+                  </form>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Access to restricted charts is recorded with your reason.
+                  </p>
+                </section>
+              ) : (
+                <section className={cn(CARD_CLASS, "p-6")}>
+                  <p className="text-sm text-muted-foreground">
+                    Select a visit to review its charges, raise an invoice and take payment.
+                  </p>
+                </section>
+              )
             ) : (
               <>
                 <section className={cn(CARD_CLASS, "p-4")} data-testid="cashier-bill">
@@ -834,6 +937,34 @@ export function CashierWorkspace() {
                           Not invoiced
                         </Badge>
                       )}
+                      {bill.privacy ? (
+                        <div className="mt-2 flex justify-end">
+                          {(() => {
+                            const { privacy } = bill;
+                            const label =
+                              privacy.consentStatus === "restricted"
+                                ? "Consent: Restricted"
+                                : privacy.consentStatus === "current"
+                                  ? "Consent: current"
+                                  : "Consent: missing";
+                            const style =
+                              privacy.consentStatus === "restricted"
+                                ? "border-[var(--status-critical)] bg-[var(--status-critical-background)] text-[var(--status-critical-foreground)]"
+                                : privacy.consentStatus === "current"
+                                  ? "border-[var(--status-normal)] bg-[var(--status-normal-background)] text-[var(--status-normal-foreground)]"
+                                  : "border-[var(--status-warning)] bg-[var(--status-warning-background)] text-[var(--status-warning-foreground)]";
+                            return (
+                              <Badge
+                                variant="outline"
+                                data-testid="cashier-consent-status"
+                                className={cn("font-medium", style)}
+                              >
+                                {label}
+                              </Badge>
+                            );
+                          })()}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
