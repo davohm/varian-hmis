@@ -12,6 +12,7 @@ import {
   bankAccounts,
   bankReconciliations,
   bankTransactions,
+  birthNotifications,
   branches,
   budgetLines,
   budgets,
@@ -28,6 +29,7 @@ import {
   dataConsents,
   dataSharingAgreements,
   dataSubjectRequests,
+  deathNotifications,
   departments,
   diagnoses,
   dispenses,
@@ -52,6 +54,7 @@ import {
   ledgerAccounts,
   licenceAlertRules,
   nextOfKin,
+  notifiableEvents,
   numberSequences,
   patients,
   payerBenefits,
@@ -65,6 +68,9 @@ import {
   prices,
   queueEntries,
   remittances,
+  reportCells,
+  reportDefinitions,
+  reportRuns,
   retentionPolicies,
   rooms,
   services,
@@ -223,6 +229,12 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(labTests).where(eq(labTests.facilityId, facilityId));
     await tx.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
     await tx.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
+    await tx.delete(reportCells).where(eq(reportCells.facilityId, facilityId));
+    await tx.delete(reportRuns).where(eq(reportRuns.facilityId, facilityId));
+    await tx.delete(reportDefinitions).where(eq(reportDefinitions.facilityId, facilityId));
+    await tx.delete(notifiableEvents).where(eq(notifiableEvents.facilityId, facilityId));
+    await tx.delete(birthNotifications).where(eq(birthNotifications.facilityId, facilityId));
+    await tx.delete(deathNotifications).where(eq(deathNotifications.facilityId, facilityId));
     await tx.delete(encounters).where(eq(encounters.facilityId, facilityId));
     await tx.delete(chartAccessLog).where(eq(chartAccessLog.facilityId, facilityId));
     await tx.delete(dataSubjectRequests).where(eq(dataSubjectRequests.facilityId, facilityId));
