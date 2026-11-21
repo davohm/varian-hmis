@@ -1,8 +1,6 @@
 # Varian HMIS operator guide
 
 Local development and clinic-server runbook. Commands below are run from the repository root.
-Maintainer note: `npm run db:backup` and `npm run db:seed:performance` are being added to
-`package.json`; the underlying scripts are `scripts/backup.ts` and `scripts/seed-performance.ts`.
 
 ## 1. Local development database
 
@@ -84,6 +82,24 @@ Windows Task Scheduler: create a basic task with action
 `Start in: C:\Users\Dev\Documents\Webapps\varian-hmis`,
 trigger daily at 02:15. Set `BACKUP_DIR` to a USB or network path in `.env.local`.
 
+Linux systemd templates are provided in `deploy/varian-backup.service` and
+`deploy/varian-backup.timer`. Install them once per node:
+
+```bash
+sudo install -m 600 /path/to/backup.env /etc/varian-hmis/backup.env
+sudo install -m 644 deploy/varian-backup.service /etc/systemd/system/varian-backup.service
+sudo install -m 644 deploy/varian-backup.timer /etc/systemd/system/varian-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now varian-backup.timer
+systemctl list-timers varian-backup.timer
+```
+
+The environment file must contain `DATABASE_URL`, `BACKUP_ENCRYPTION_KEY`, `BACKUP_DIR`,
+`BACKUP_RETENTION_DAYS=14`, and, on Debian/Ubuntu, `PG_BIN_DIR=/usr/lib/postgresql/17/bin`.
+If `BACKUP_DIR` is not `/var/backups/varian-hmis`, update `ReadWritePaths` in the installed service
+unit. Keep the environment file root-readable only. Confirm the first scheduled run through
+`journalctl -u varian-backup.service -n 50 --no-pager` and the `phase: "complete"` JSON line.
+
 ### Retention and restore verification
 
 Inspect a backup without decrypting to disk (metadata is in plaintext only before encryption):
@@ -108,6 +124,12 @@ node -e "const fs=require('fs'),c=require('crypto');const b=fs.readFileSync(proc
 
 Delete `restore.dump` afterwards; it contains unencrypted patient data.
 
+Run a scratch restore **monthly and after every PostgreSQL/Docker upgrade**. Record the backup
+filename, SHA-256 from the `phase: "complete"` log line, restore date, scratch database name and
+operator. A backup is not considered verified until `pg_restore --list` shows a real table of
+contents and the scratch database starts and answers queries. Drop the scratch database after the
+check; never restore over a live branch or HQ database.
+
 ## 5. Sync worker
 
 ```bash
@@ -117,6 +139,23 @@ npm run sync:worker    # continuous worker
 
 Clinic mode requires `SYNC_ENABLED=true`, `CLOUD_URL`, `FACILITY_ID` and `FACILITY_SYNC_TOKEN`.
 There is one write authority per facility; a non-empty `result.errors` from `sync:once` exits 1.
+
+Deployed branch nodes use `SYNC_BATCH_SIZE=50` and `SYNC_TIMEOUT_MS=60000`. Smaller batches stop a
+large catch-up push from timing out on a slow link; the cloud endpoint still rejects batches above
+100 rows. `SYNC_POLL_MS=10000` and `SYNC_PULL_MS=300000` are unchanged. The Compose sync-worker
+service has `restart: unless-stopped` and rotated JSON logs (`10m` × 5 files per branch).
+
+Monitor the sync worker on every branch:
+
+```bash
+docker compose -p <project> -f deploy/docker-compose.branch.yml logs -f --tail=100 sync-worker
+docker compose -p <project> -f deploy/docker-compose.branch.yml ps sync-worker
+```
+
+Alert when the worker container restarts unexpectedly, when `cloud offline` persists beyond the
+site's expected outage window, when a `cycle` log line contains a non-empty `errors` array, or when
+Admin → Sync shows `failed` rows or no recent success for a facility. Retry failed rows from the
+Sync monitor after connectivity returns, then confirm the outbox drains.
 
 ## 6. Performance seed (opt-in)
 
@@ -185,3 +224,31 @@ Set the production row's `enabled = false` and remove `ETIMS_ALLOW_PRODUCTION` f
 Existing acknowledged documents and their credit-note links remain untouched. A sandbox run can
 never write to the production target: the client refuses sandbox requests that resolve to the
 configured production URL, and production requests without the explicit allow flag.
+
+## 9. Nairobi HQ with Ruaka and Thika branch nodes
+
+The three-node topology, Cloudflare Tunnel front door, branch provisioning and sync verification
+are documented in `docs/DEPLOYMENT.md`. In short: HQ runs `APP_MODE=cloud` with `FAM` as the only
+cloud-authority facility; Ruaka (`RUA`) and Thika (`THK`) run separate clinic-mode stacks with
+their own databases and `write_authority = clinic`. Provision their sync tokens from HQ with
+`npm run provision:branches`, then verify each node with `npm run sync:once`.
+
+## 10. Regulatory placeholder sandbox
+
+`REGDEMO-001` is a **local test fixture** in the FAM branch database. It is not a physical site, is
+not part of the cloud topology, and its invented values are never valid for billing, claims or
+compliance evidence. All commands against a `REGDEMO-` facility suppress outbox capture, so edits
+made through Admin → Regulatory stay in that database and never reach Neon.
+
+Provision or refresh it from the branch machine:
+
+```bash
+npx tsx scripts/seed-regulatory-test-placeholders.ts
+```
+
+Then switch **Active facility** to `REGDEMO-001` on `/admin/regulatory`. The page shows a red
+`TEST PLACEHOLDER DATA` banner and a **Load TEST placeholders** action. That action is idempotent
+and re-applies the obviously invented KMPDC, ODPC, SHA, PPB, KMLTTB, RPB, quality and statutory
+values. `FAM` remains empty where regulator values are unconfirmed; enter those only from documents
+supplied by the facility. Document upload is not implemented yet — use **Document reference** to
+point to the signed source.

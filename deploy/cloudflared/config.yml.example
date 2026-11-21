@@ -1,0 +1,11 @@
+# Copy to deploy/cloudflared/config.yml on the HQ host and add the tunnel
+# credentials JSON in the same directory. Keep both out of git.
+tunnel: replace-with-cloudflare-tunnel-id
+credentials-file: /etc/cloudflared/replace-with-cloudflare-tunnel-id.json
+
+ingress:
+  - hostname: hmis.example.com
+    service: http://app:3000
+  - hostname: hq-api.example.com
+    service: http://app:3000
+  - service: http_status:404

@@ -167,6 +167,11 @@ interface ShaCodeRow {
 
 interface RegulatoryPayload {
   facilityId: string;
+  facility: {
+    code: string;
+    name: string;
+    isPlaceholder: boolean;
+  };
   profile: ProfileRow | null;
   licences: LicenceRow[];
   practitioners: PractitionerRow[];
@@ -292,6 +297,82 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+function EntryGuidance({
+  data,
+  busy,
+  run,
+  onOpenEntry,
+}: {
+  data: RegulatoryPayload;
+  busy: string | null;
+  run: (
+    label: string,
+    command: string,
+    input: Record<string, unknown>,
+    success: string,
+  ) => Promise<boolean>;
+  onOpenEntry: () => void;
+}) {
+  const placeholder = data.facility.isPlaceholder;
+  return (
+    <section
+      className={cn(
+        "rounded-lg border px-4 py-3",
+        placeholder
+          ? "border-[var(--status-critical)]/40 bg-[var(--status-critical-background)]"
+          : "border-border bg-card",
+      )}
+      data-testid="regulatory-entry-guidance"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p
+            className={cn(
+              "font-mono text-[10px] uppercase tracking-[0.18em]",
+              placeholder
+                ? "text-[var(--status-critical-foreground)]"
+                : "text-muted-foreground",
+            )}
+          >
+            {placeholder ? "TEST PLACEHOLDER DATA" : "Regulatory data entry"}
+          </p>
+          <h2 className="text-sm font-semibold text-primary">
+            {placeholder ? "Local sandbox: invented values only" : "Enter values in the tabs below"}
+          </h2>
+          <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+            {placeholder
+              ? `Facility ${data.facility.code} is a local test sandbox. Every value below is invented and must never be used for billing, claims or compliance evidence.`
+              : "Use the tabs below to record regulator values. Document upload is not available yet; use Document reference to point to the signed source."}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={onOpenEntry}>
+            Open data entry
+          </Button>
+          {placeholder ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={Boolean(busy)}
+              data-testid="regulatory-placeholder-load"
+              onClick={() =>
+                void run(
+                  "placeholders",
+                  "loadRegulatoryTestPlaceholders",
+                  {},
+                  "TEST placeholders loaded.",
+                )
+              }
+            >
+              {busy === "placeholders" ? "Loading..." : "Load TEST placeholders"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Panel                                                               */
 /* ------------------------------------------------------------------ */
@@ -346,6 +427,13 @@ export function RegulatoryPanel() {
     [load],
   );
 
+  const openEntry = useCallback(() => {
+    setTab("profile");
+    requestAnimationFrame(() => {
+      document.getElementById("regulatory-entry-tabs")?.scrollIntoView({ block: "start" });
+    });
+  }, []);
+
   if (error) {
     return (
       <Panel title="Regulatory" description={error} testId="regulatory-error">
@@ -361,8 +449,14 @@ export function RegulatoryPanel() {
   return (
     <div className="space-y-4" data-testid="regulatory-panel">
       <ReadinessSummary data={data} />
+      <EntryGuidance data={data} busy={busy} run={run} onOpenEntry={openEntry} />
 
-      <div className="flex flex-wrap gap-1 border-b border-border" role="tablist" aria-label="Regulatory sections">
+      <div
+        id="regulatory-entry-tabs"
+        className="flex flex-wrap gap-1 border-b border-border"
+        role="tablist"
+        aria-label="Regulatory sections"
+      >
         {TABS.map((item) => (
           <button
             key={item.id}

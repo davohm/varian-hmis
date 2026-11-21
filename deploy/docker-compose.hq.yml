@@ -1,0 +1,51 @@
+# Nairobi HQ — cloud authority and the only node exposed through Cloudflare Tunnel.
+# Usage: docker compose -f deploy/docker-compose.hq.yml --env-file deploy/.env.hq up -d
+#
+# No branch database or port is published here. The tunnel reaches app:3000 only;
+# clinic nodes initiate sync outbound over HTTPS to the tunnel hostname.
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: varian-hq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-varian-hmis}
+      POSTGRES_USER: ${POSTGRES_USER:-varian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env.hq}
+    volumes:
+      - hq_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-varian} -d ${POSTGRES_DB:-varian-hmis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: ..
+    container_name: varian-hq-app
+    restart: unless-stopped
+    env_file: .env.hq
+    environment:
+      APP_MODE: cloud
+      DATABASE_URL: postgresql://${POSTGRES_USER:-varian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-varian-hmis}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in deploy/.env.hq}
+    command: sh -c "npm run db:migrate && npm run db:seed && npm start"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: varian-hq-tunnel
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - app
+
+volumes:
+  hq_pgdata:

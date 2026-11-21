@@ -474,7 +474,7 @@ export async function getFacilityReadinessStatus(
   options: { today?: string } = {},
 ): Promise<ReadinessReport> {
   const asOf = options.today ?? todayIso();
-  const [profile, licences, warnDays] = await Promise.all([
+  const [profile, licences, identifiers, warnDays] = await Promise.all([
     getFacilityRegulatoryProfile(database, facilityId),
     database
       .select()
@@ -485,6 +485,10 @@ export async function getFacilityReadinessStatus(
           eq(supportServiceLicences.active, true),
         ),
       ),
+    database
+      .select()
+      .from(facilityIdentifiers)
+      .where(eq(facilityIdentifiers.facilityId, facilityId)),
     readinessWarnDays(database, facilityId),
   ]);
 
@@ -498,6 +502,10 @@ export async function getFacilityReadinessStatus(
       });
     }
   }
+
+  const qualityCertificate = identifiers
+    .filter((identifier) => identifier.identifierType === "quality_certificate" && identifier.validTo)
+    .sort((a, b) => (b.validTo ?? "").localeCompare(a.validTo ?? ""))[0];
 
   const domains = deriveReadiness({
     today: asOf,
@@ -536,7 +544,9 @@ export async function getFacilityReadinessStatus(
           status: latestByType.get("imaging")!.status as never,
         }
       : undefined,
-    quality: undefined,
+    quality: qualityCertificate
+      ? { certExpiry: qualityCertificate.validTo }
+      : undefined,
   });
 
   const overall = domains.some((domain) => domain.status === "expired")

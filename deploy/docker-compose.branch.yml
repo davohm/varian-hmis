@@ -1,0 +1,88 @@
+# Reusable branch-node stack. Use one Compose project per branch so the
+# database volume, published port and environment stay separate:
+#
+#   docker compose -p varian-ruaka -f deploy/docker-compose.branch.yml \
+#     --env-file deploy/.env.ruaka up -d
+#   docker compose -p varian-thika -f deploy/docker-compose.branch.yml \
+#     --env-file deploy/.env.thika up -d
+#
+# The branch is APP_MODE=clinic and holds its own write authority. All cloud
+# traffic is outbound: the app and sync-worker call CLOUD_URL (HQ tunnel), and
+# no inbound port is opened for sync.
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: ${BRANCH_CONTAINER_PREFIX:-varian-branch}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-varian-hmis}
+      POSTGRES_USER: ${POSTGRES_USER:-varian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the branch env file}
+    volumes:
+      - branch_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-varian} -d ${POSTGRES_DB:-varian-hmis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: ..
+    container_name: ${BRANCH_CONTAINER_PREFIX:-varian-branch}-app
+    restart: unless-stopped
+    env_file: ${BRANCH_ENV_FILE:-.env.ruaka}
+    environment:
+      APP_MODE: clinic
+      SYNC_ENABLED: "true"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-varian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-varian-hmis}
+    command: sh -c "npm run db:migrate && npm run db:seed && npm start"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3000"
+
+  sync-worker:
+    build: ..
+    container_name: ${BRANCH_CONTAINER_PREFIX:-varian-branch}-sync
+    restart: unless-stopped
+    env_file: ${BRANCH_ENV_FILE:-.env.ruaka}
+    environment:
+      APP_MODE: clinic
+      SYNC_ENABLED: "true"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-varian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-varian-hmis}
+      # Production-safe defaults for catch-up batches over slow links. The
+      # branch env file may override them; the worker still caps batches at 100.
+      SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50}
+      SYNC_TIMEOUT_MS: ${SYNC_TIMEOUT_MS:-60000}
+    command: npm run sync:worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      app:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ${BRANCH_CONTAINER_PREFIX:-varian-branch}-caddy
+    restart: unless-stopped
+    ports:
+      - "${BRANCH_HTTPS_PORT:-443}:443"
+      - "${BRANCH_HTTP_PORT:-80}:80"
+    volumes:
+      - ./Caddyfile.branch:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  branch_pgdata:
+  caddy_data:
+  caddy_config:

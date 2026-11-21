@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { isRegulatoryPlaceholderFacility } from "@/lib/regulatory";
 import { findCommand } from "@/server/audit";
 import { type AppDatabase, db } from "@/server/db/client";
 import { APP_MODE, type AppMode } from "@/server/env";
@@ -54,12 +55,13 @@ export async function runCommand<T>(
 
   return executor.transaction(async (tx) => {
     const authority = await tx.execute(sql`
-      SELECT write_authority::text AS "writeAuthority"
+      SELECT write_authority::text AS "writeAuthority", code::text AS "code"
       FROM facilities
       WHERE id = ${request.facilityId}::uuid
       LIMIT 1
     `);
-    const storedAuthority = ((authority as { rows?: Array<{ writeAuthority?: string }> }).rows ?? [])[0]?.writeAuthority;
+    const facility = ((authority as { rows?: Array<{ writeAuthority?: string; code?: string }> }).rows ?? [])[0];
+    const storedAuthority = facility?.writeAuthority;
     const mode = options.mode ?? APP_MODE;
     if (
       !options.allowCrossAuthority &&
@@ -70,6 +72,12 @@ export async function runCommand<T>(
       throw new Error(
         `Facility is owned by ${storedAuthority}; writes from ${mode} mode are not allowed`,
       );
+    }
+
+    // Regulatory sandboxes are local test fixtures. Suppressing capture here
+    // keeps every later edit out of the outbox, not just the initial seed.
+    if (isRegulatoryPlaceholderFacility(facility?.code)) {
+      await tx.execute(sql`SET LOCAL varian.sync_apply = 'on'`);
     }
 
     const claim = await tx.execute(sql`

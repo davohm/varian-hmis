@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly Varian HMIS encrypted backup
+Documentation=file:/srv/varian-hmis/docs/OPERATORS.md
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=5m
+AccuracySec=1m
+Persistent=true
+Unit=varian-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -43,10 +43,13 @@ import {
   type Role,
 } from "../src/server/db/schema";
 
-const FACILITY_CODE = "FAM";
-const FACILITY_NAME = "Family Afya Modern Medical Centre";
-const BRANCH_CODE = "MAIN";
-const BRANCH_NAME = "Main Branch";
+// Branch nodes seed their own facility identity; HQ keeps the historical FAM
+// defaults so existing deployments and tests are unchanged.
+const FACILITY_CODE = process.env.SEED_FACILITY_CODE?.trim().toUpperCase() || "FAM";
+const FACILITY_NAME = process.env.SEED_FACILITY_NAME?.trim() || "Family Afya Modern Medical Centre";
+const BRANCH_CODE = process.env.SEED_BRANCH_CODE?.trim().toUpperCase() || "MAIN";
+const BRANCH_NAME = process.env.SEED_BRANCH_NAME?.trim() || "Main Branch";
+const FACILITY_COUNTY = process.env.SEED_COUNTY?.trim() || "Nairobi";
 const STAFF_PASSWORD = "VarianHMIS2026!";
 
 const STAFF_SEEDS: Array<{ role: Role; name: string; email: string; staffNumber: string }> = [
@@ -691,7 +694,7 @@ async function upsertFacility(db: ReturnType<typeof createDatabase>["db"]) {
       id: newId(),
       code: FACILITY_CODE,
       name: FACILITY_NAME,
-      county: "Nairobi",
+      county: FACILITY_COUNTY,
       writeAuthority: APP_MODE === "clinic" ? "clinic" : "cloud",
       timezone: "Africa/Nairobi",
       createdBy: "seed",

@@ -1,10 +1,14 @@
+import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { isRegulatoryPlaceholderFacility } from "@/lib/regulatory";
 import { apiErrorResponse } from "@/server/auth/api-error";
 import { db } from "@/server/db/client";
+import { facilities } from "@/server/db/schema";
 import {
   createLicenceAlertRule,
+  loadRegulatoryTestPlaceholders,
   updateFacilityLicence,
   upsertFacilityIdentifier,
   upsertFacilityRegulatoryProfile,
@@ -68,12 +72,21 @@ const commands: Record<string, (input: RawInput) => Promise<unknown>> = {
     upsertIntegrationSetting(input as Parameters<typeof upsertIntegrationSetting>[0]),
   verifyIntegrationConnection: (input) =>
     verifyIntegrationConnection(input as Parameters<typeof verifyIntegrationConnection>[0]),
+  loadRegulatoryTestPlaceholders: (input) =>
+    loadRegulatoryTestPlaceholders(input as Parameters<typeof loadRegulatoryTestPlaceholders>[0]),
 };
 
 export async function GET() {
   try {
     const access = await requireRegulatoryAccess();
     const { facilityId } = access;
+
+    const facilityRows = await db
+      .select({ code: facilities.code, name: facilities.name })
+      .from(facilities)
+      .where(eq(facilities.id, facilityId))
+      .limit(1);
+    const facility = facilityRows[0];
 
     const [
       profile,
@@ -109,6 +122,11 @@ export async function GET() {
 
     return NextResponse.json({
       facilityId,
+      facility: {
+        code: facility?.code ?? "",
+        name: facility?.name ?? "",
+        isPlaceholder: isRegulatoryPlaceholderFacility(facility?.code),
+      },
       sections: access.sections,
       profile,
       licences,

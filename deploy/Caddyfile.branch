@@ -1,0 +1,6 @@
+# LAN-only HTTPS for a branch node. Caddy's internal CA issues the certificate;
+# install the root CA on station computers before rollout.
+https://hmis.local {
+  tls internal
+  reverse_proxy app:3000
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=Varian HMIS encrypted database backup
+Documentation=file:/srv/varian-hmis/docs/OPERATORS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/srv/varian-hmis
+EnvironmentFile=/etc/varian-hmis/backup.env
+ExecStart=/usr/bin/npm run db:backup -- --once
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/varian-hmis
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

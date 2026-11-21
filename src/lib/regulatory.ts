@@ -6,6 +6,17 @@
  * "missing" instead of drifting apart.
  */
 
+/**
+ * Facilities whose code starts with this prefix are local regulatory sandboxes.
+ * Commands against them never write to the sync outbox, so placeholder values
+ * can be edited in the real admin UI without reaching a branch or the cloud.
+ */
+export const REGULATORY_PLACEHOLDER_FACILITY_PREFIX = "REGDEMO-";
+
+export function isRegulatoryPlaceholderFacility(code: string | null | undefined): boolean {
+  return Boolean(code && code.trim().toUpperCase().startsWith(REGULATORY_PLACEHOLDER_FACILITY_PREFIX));
+}
+
 export const REGULATORY_DOMAINS = [
   "kmpdc",
   "sha",

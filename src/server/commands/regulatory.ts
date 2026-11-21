@@ -1,6 +1,7 @@
-import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, like, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { isRegulatoryPlaceholderFacility } from "@/lib/regulatory";
 import {
   FACILITY_OWNERSHIPS,
   KMPDC_FACILITY_CATEGORIES,
@@ -21,6 +22,7 @@ import { ForbiddenError } from "@/server/auth/rbac";
 import { recordAudit } from "@/server/audit";
 import { db } from "@/server/db/client";
 import {
+  facilities,
   facilityIdentifiers,
   facilityLicences,
   facilityRegulatoryProfiles,
@@ -35,8 +37,10 @@ import {
   statutoryRates,
   supportServiceLicences,
 } from "@/server/db/schema";
+import { APP_MODE } from "@/server/env";
 import { publishEvent } from "@/server/events";
 import { getFacilityReadinessStatus, todayIso } from "@/server/queries/regulatory";
+import { seedRegulatoryDefaults } from "@/server/regulatory-seed";
 
 import { actorSchema, runCommand, type CommandActor, type CommandOptions, type CommandTransaction } from "./run";
 
@@ -1858,6 +1862,511 @@ export async function verifyIntegrationConnection(
         ok: true,
         detail: result.detail ?? "ok",
         verifiedAt: verifiedAt.toISOString(),
+      };
+    },
+    options,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Local-only regulatory placeholder sandbox                            */
+/* ------------------------------------------------------------------ */
+
+export const loadRegulatoryTestPlaceholdersSchema = z.object({
+  ...baseSchema,
+});
+
+export interface RegulatoryTestPlaceholderResult {
+  facilityId: string;
+  placeholder: true;
+  loadedOn: string;
+  rows: {
+    profile: number;
+    licences: number;
+    practitioners: number;
+    supportServices: number;
+    identifiers: number;
+    alertRules: number;
+    settings: number;
+    statutoryRates: number;
+    statutoryFees: number;
+    shaCodes: number;
+    integrations: number;
+  };
+}
+
+/**
+ * Load obviously invented regulatory values into a local `REGDEMO-*` facility.
+ * The command refuses any other facility and refuses cloud mode, and
+ * `runCommand` suppresses outbox capture for the whole transaction. This is the
+ * only supported way to populate the placeholder sandbox used for UI testing.
+ */
+export async function loadRegulatoryTestPlaceholders(
+  input: z.input<typeof loadRegulatoryTestPlaceholdersSchema>,
+  options: CommandOptions = {},
+): Promise<RegulatoryTestPlaceholderResult> {
+  const values = loadRegulatoryTestPlaceholdersSchema.parse(input);
+  const userId = actorId(values);
+  const mode = options.mode ?? APP_MODE;
+
+  if (mode !== "clinic") {
+    throw new Error("Regulatory placeholders can only be loaded from a clinic-mode node");
+  }
+
+  const executor = options.database ?? db;
+  const facilityRows = await executor
+    .select({ code: facilities.code })
+    .from(facilities)
+    .where(eq(facilities.id, values.facilityId))
+    .limit(1);
+  if (!isRegulatoryPlaceholderFacility(facilityRows[0]?.code)) {
+    throw new Error("Regulatory placeholders can only be loaded into a REGDEMO- test facility");
+  }
+
+  return runCommand(
+    { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
+    "loadRegulatoryTestPlaceholders",
+    async (tx) => {
+      await tx.execute(sql`SET LOCAL varian.sync_apply = 'on'`);
+
+      const today = todayIso();
+      const staffRows = await tx
+        .select({ staffProfileId: staffProfiles.id })
+        .from(staffProfiles)
+        .innerJoin(
+          staffRoleScopes,
+          eq(staffRoleScopes.userId, staffProfiles.userId),
+        )
+        .where(eq(staffRoleScopes.facilityId, values.facilityId))
+        .limit(1);
+      const staffProfileId = staffRows[0]?.staffProfileId;
+      if (!staffProfileId) {
+        throw new Error("The placeholder facility needs at least one staff profile before seeding");
+      }
+
+      const now = new Date();
+      const profile = {
+        kmpdcNumber: "TEST-KMPDC-0001",
+        kmhflId: "TEST-KMHFL-0001",
+        kephLevel: 2,
+        facilityCategory: "medical clinic" as const,
+        ownership: "private" as const,
+        county: "TEST COUNTY",
+        subCounty: "TEST SUB-COUNTY",
+        constituency: "TEST CONSTITUENCY",
+        ward: "TEST WARD",
+        licenceNo: "TEST-LIC-0001",
+        licenceIssueDate: addDays(today, -120),
+        licenceExpiryDate: addDays(today, 240),
+        licenceStatus: "active" as const,
+        indemnityProvider: "TEST PLACEHOLDER INSURER",
+        indemnityNo: "TEST-INDEMNITY-0001",
+        indemnityExpiryDate: addDays(today, 300),
+        shaFacilityCode: "TEST-SHA-0001",
+        shaEmpanelmentStatus: "active",
+        odpcRegistrationNo: "TEST-ODPC-0001",
+        odpcCategory: "TEST PLACEHOLDER DATA CONTROLLER",
+        odpcExpiryDate: addDays(today, 400),
+        kraPin: "P000000000T",
+        tccNo: "TEST-TCC-0001",
+        tccExpiryDate: addDays(today, 240),
+        nssfEmployerCode: "TEST-NSSF-0001",
+        shifEmployerCode: "TEST-SHIF-0001",
+        kemsaSupplierCode: "TEST-KEMSA-0001",
+        updatedBy: userId,
+        updatedAt: now,
+      };
+      await tx
+        .insert(facilityRegulatoryProfiles)
+        .values({ facilityId: values.facilityId, ...profile })
+        .onConflictDoUpdate({
+          target: facilityRegulatoryProfiles.facilityId,
+          set: {
+            ...profile,
+            version: sql`${facilityRegulatoryProfiles.version} + 1`,
+          },
+        });
+
+      const licenceRows = [
+        {
+          facilityId: values.facilityId,
+          licenceType: "kmpdc_facility",
+          licenceNo: "TEST-LIC-0001",
+          issueDate: addDays(today, -120),
+          expiryDate: addDays(today, 240),
+          status: "active",
+          documentRef: "TEST PLACEHOLDER - KMPDC facility licence",
+          notes: "TEST PLACEHOLDER - never use as compliance evidence",
+          createdBy: userId,
+        },
+        {
+          facilityId: values.facilityId,
+          licenceType: "odpc",
+          licenceNo: "TEST-ODPC-LIC-0001",
+          issueDate: addDays(today, -60),
+          expiryDate: addDays(today, 400),
+          status: "active",
+          documentRef: "TEST PLACEHOLDER - ODPC registration",
+          notes: "TEST PLACEHOLDER - never use as compliance evidence",
+          createdBy: userId,
+        },
+        {
+          facilityId: values.facilityId,
+          licenceType: "sha_empanelment",
+          licenceNo: "TEST-SHA-LIC-0001",
+          issueDate: addDays(today, -30),
+          expiryDate: addDays(today, 365),
+          status: "active",
+          documentRef: "TEST PLACEHOLDER - SHA empanelment",
+          notes: "TEST PLACEHOLDER - never use as compliance evidence",
+          createdBy: userId,
+        },
+      ] as const;
+      for (const licence of licenceRows) {
+        await tx
+          .insert(facilityLicences)
+          .values(licence)
+          .onConflictDoUpdate({
+            target: [
+              facilityLicences.facilityId,
+              facilityLicences.licenceType,
+              facilityLicences.licenceNo,
+            ],
+            set: {
+              issueDate: licence.issueDate,
+              expiryDate: licence.expiryDate,
+              status: licence.status,
+              documentRef: licence.documentRef,
+              notes: licence.notes,
+              updatedAt: now,
+              version: sql`${facilityLicences.version} + 1`,
+            },
+          });
+      }
+
+      await tx
+        .insert(practitionerRegistrations)
+        .values({
+          facilityId: values.facilityId,
+          staffProfileId,
+          regulator: "kmpdc",
+          profession: "TEST PLACEHOLDER CLINICIAN",
+          registrationNo: "TEST-KMPDC-PRACT-0001",
+          annualLicenceNo: "TEST-ANNUAL-0001",
+          licenceIssueDate: addDays(today, -90),
+          licenceExpiryDate: addDays(today, 200),
+          licenceStatus: "active",
+          cpdPoints: "10.0",
+          cpdCycle: "2026",
+          cpdStatus: "TEST PLACEHOLDER",
+          specialistRecognition: "TEST PLACEHOLDER - not a recognised speciality",
+          verifiedAt: now,
+          verifiedBy: userId,
+          active: true,
+          createdBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            practitionerRegistrations.facilityId,
+            practitionerRegistrations.staffProfileId,
+            practitionerRegistrations.regulator,
+          ],
+          set: {
+            profession: "TEST PLACEHOLDER CLINICIAN",
+            registrationNo: "TEST-KMPDC-PRACT-0001",
+            annualLicenceNo: "TEST-ANNUAL-0001",
+            licenceIssueDate: addDays(today, -90),
+            licenceExpiryDate: addDays(today, 200),
+            licenceStatus: "active",
+            cpdPoints: "10.0",
+            cpdCycle: "2026",
+            cpdStatus: "TEST PLACEHOLDER",
+            verifiedAt: now,
+            verifiedBy: userId,
+            active: true,
+            updatedAt: now,
+            version: sql`${practitionerRegistrations.version} + 1`,
+          },
+        });
+
+      await tx
+        .update(supportServiceLicences)
+        .set({
+          active: false,
+          updatedAt: now,
+          version: sql`${supportServiceLicences.version} + 1`,
+        })
+        .where(
+          and(
+            eq(supportServiceLicences.facilityId, values.facilityId),
+            like(supportServiceLicences.conditions, "TEST PLACEHOLDER%"),
+          ),
+        );
+      const supportRows = [
+        {
+          serviceType: "pharmacy",
+          licenceNo: "TEST-PPB-0001",
+          issuingAuthority: "TEST PLACEHOLDER PPB",
+          expiryDate: addDays(today, 300),
+        },
+        {
+          serviceType: "laboratory",
+          licenceNo: "TEST-KMLTTB-0001",
+          issuingAuthority: "TEST PLACEHOLDER KMLTTB",
+          expiryDate: addDays(today, 18),
+        },
+        {
+          serviceType: "imaging",
+          licenceNo: "TEST-RPB-0001",
+          issuingAuthority: "TEST PLACEHOLDER RPB",
+          expiryDate: addDays(today, 250),
+        },
+      ] as const;
+      for (const service of supportRows) {
+        await tx.insert(supportServiceLicences).values({
+          facilityId: values.facilityId,
+          serviceType: service.serviceType,
+          licenceNo: service.licenceNo,
+          issuingAuthority: service.issuingAuthority,
+          issueDate: addDays(today, -90),
+          expiryDate: service.expiryDate,
+          status: licenceStatusFor(service.expiryDate, today),
+          conditions: `TEST PLACEHOLDER - ${service.serviceType} licence`,
+          active: true,
+          createdBy: userId,
+        });
+      }
+
+      const identifierRows = [
+        {
+          identifierType: "quality_certificate",
+          value: "TEST-QUALITY-0001",
+          issuingAuthority: "TEST PLACEHOLDER QUALITY BODY",
+          validFrom: addDays(today, -30),
+          validTo: addDays(today, 200),
+          status: "active",
+        },
+        {
+          identifierType: "khis_org_unit",
+          value: "TEST-KHIS-0001",
+          issuingAuthority: "TEST PLACEHOLDER MOH",
+          validFrom: addDays(today, -120),
+          validTo: null,
+          status: "active",
+        },
+        {
+          identifierType: "document_reference",
+          value: "TEST-DOC-KMPDC-0001",
+          issuingAuthority: "TEST PLACEHOLDER",
+          validFrom: addDays(today, -120),
+          validTo: null,
+          status: "active",
+        },
+      ];
+      for (const identifier of identifierRows) {
+        await tx
+          .insert(facilityIdentifiers)
+          .values({ facilityId: values.facilityId, ...identifier, createdBy: userId })
+          .onConflictDoUpdate({
+            target: [
+              facilityIdentifiers.facilityId,
+              facilityIdentifiers.identifierType,
+              facilityIdentifiers.value,
+            ],
+            set: {
+              issuingAuthority: identifier.issuingAuthority,
+              validFrom: identifier.validFrom,
+              validTo: identifier.validTo,
+              status: identifier.status,
+              updatedAt: now,
+              version: sql`${facilityIdentifiers.version} + 1`,
+            },
+          });
+      }
+
+      await tx
+        .update(licenceAlertRules)
+        .set({
+          enabled: false,
+          updatedAt: now,
+          version: sql`${licenceAlertRules.version} + 1`,
+        })
+        .where(eq(licenceAlertRules.facilityId, values.facilityId));
+      await tx.insert(licenceAlertRules).values({
+        facilityId: values.facilityId,
+        subjectType: "facility",
+        subjectId: null,
+        warnDays: [30, 14],
+        blockDays: [7, 0],
+        notifyRoles: ["admin", "regulatory_officer"],
+        enabled: true,
+        createdBy: userId,
+      });
+
+      const seededSettings = await seedRegulatoryDefaults(
+        tx as unknown as Parameters<typeof seedRegulatoryDefaults>[0],
+        values.facilityId,
+        { createdBy: userId },
+      );
+
+      await tx
+        .insert(statutoryRates)
+        .values({
+          facilityId: values.facilityId,
+          rateType: "test_placeholder_statutory_rate",
+          bandOrder: 1,
+          lowerBound: "0",
+          upperBound: "1000",
+          ratePercent: "0.000",
+          fixedAmount: "0.00",
+          effectiveFrom: today,
+          legalReference: "TEST PLACEHOLDER - not a legal rate",
+          active: true,
+          createdBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            statutoryRates.facilityId,
+            statutoryRates.rateType,
+            statutoryRates.bandOrder,
+            statutoryRates.effectiveFrom,
+          ],
+          set: {
+            lowerBound: "0",
+            upperBound: "1000",
+            ratePercent: "0.000",
+            fixedAmount: "0.00",
+            legalReference: "TEST PLACEHOLDER - not a legal rate",
+            active: true,
+            updatedAt: now,
+            version: sql`${statutoryRates.version} + 1`,
+          },
+        });
+
+      await tx
+        .insert(statutoryFeeSchedules)
+        .values({
+          facilityId: values.facilityId,
+          authority: "TEST PLACEHOLDER AUTHORITY",
+          category: "TEST PLACEHOLDER FEE",
+          amount: "0.00",
+          currency: "KES",
+          renewalMonth: 1,
+          renewalDay: 1,
+          penaltyNote: "TEST PLACEHOLDER - no penalty",
+          effectiveFrom: today,
+          sourceUrl: "https://example.invalid/test-placeholder",
+          active: true,
+          createdBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            statutoryFeeSchedules.facilityId,
+            statutoryFeeSchedules.authority,
+            statutoryFeeSchedules.category,
+            statutoryFeeSchedules.effectiveFrom,
+          ],
+          set: {
+            amount: "0.00",
+            currency: "KES",
+            renewalMonth: 1,
+            renewalDay: 1,
+            penaltyNote: "TEST PLACEHOLDER - no penalty",
+            sourceUrl: "https://example.invalid/test-placeholder",
+            active: true,
+            updatedAt: now,
+            version: sql`${statutoryFeeSchedules.version} + 1`,
+          },
+        });
+
+      await tx
+        .insert(shaAdjudicationCodes)
+        .values({
+          facilityId: values.facilityId,
+          code: "TEST-SHA-0001",
+          description: "TEST PLACEHOLDER adjudication code",
+          category: "info",
+          retryable: false,
+          actionHint: "TEST PLACEHOLDER - do not use for claims",
+          active: true,
+          createdBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [shaAdjudicationCodes.facilityId, shaAdjudicationCodes.code],
+          set: {
+            description: "TEST PLACEHOLDER adjudication code",
+            category: "info",
+            retryable: false,
+            actionHint: "TEST PLACEHOLDER - do not use for claims",
+            active: true,
+            updatedAt: now,
+            version: sql`${shaAdjudicationCodes.version} + 1`,
+          },
+        });
+
+      await tx
+        .insert(integrationSettings)
+        .values({
+          facilityId: values.facilityId,
+          integration: "khis",
+          environment: "sandbox",
+          baseUrl: "https://example.invalid/khis-test",
+          specVersion: "TEST-PLACEHOLDER",
+          mode: "manual",
+          credentialRef: "TEST PLACEHOLDER - no secret stored",
+          timeoutMs: 30_000,
+          maxAttempts: 3,
+          enabled: false,
+          createdBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            integrationSettings.facilityId,
+            integrationSettings.integration,
+            integrationSettings.environment,
+          ],
+          set: {
+            baseUrl: "https://example.invalid/khis-test",
+            specVersion: "TEST-PLACEHOLDER",
+            mode: "manual",
+            credentialRef: "TEST PLACEHOLDER - no secret stored",
+            timeoutMs: 30_000,
+            maxAttempts: 3,
+            enabled: false,
+            updatedAt: now,
+            version: sql`${integrationSettings.version} + 1`,
+          },
+        });
+
+      await recordAudit(tx, {
+        ...auditMeta(values),
+        action: "regulatory.placeholders.loaded",
+        entity: "facility_regulatory_profiles",
+        entityId: values.facilityId,
+        details: {
+          placeholder: true,
+          facilityCode: facilityRows[0]?.code ?? null,
+          loadedOn: today,
+        },
+      });
+
+      return {
+        facilityId: values.facilityId,
+        placeholder: true,
+        loadedOn: today,
+        rows: {
+          profile: 1,
+          licences: licenceRows.length,
+          practitioners: 1,
+          supportServices: supportRows.length,
+          identifiers: identifierRows.length,
+          alertRules: 1,
+          settings: seededSettings,
+          statutoryRates: 1,
+          statutoryFees: 1,
+          shaCodes: 1,
+          integrations: 1,
+        },
       };
     },
     options,

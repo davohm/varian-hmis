@@ -115,6 +115,7 @@ export const ADMIN_COMMAND_SECTIONS: Record<string, AdminSection> = {
   upsertIntegrationSetting: "regulatory",
   verifyIntegrationConnection: "regulatory",
   upsertFacilityIdentifier: "regulatory",
+  loadRegulatoryTestPlaceholders: "regulatory",
   recordConsent: "privacy",
   withdrawConsent: "privacy",
   createDataSubjectRequest: "privacy",
