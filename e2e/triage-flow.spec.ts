@@ -21,6 +21,7 @@ async function registerPatientWithVisit(page: Page, suffix: string) {
   await page.getByTestId("patient-phone").fill(`07${String(Date.now()).slice(-9)}`);
   await page.getByTestId("start-visit-checkbox").check();
   await page.getByTestId("register-patient").click();
+  await page.getByTestId("registration-consent-confirm").click();
 
   await expect(page.getByTestId("registration-success")).toContainText(`Vitals${suffix}`);
   const banner = await page.getByTestId("registration-success").innerText();

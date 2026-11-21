@@ -9,5 +9,6 @@ export * from "./reporting";
 export * from "./revenue";
 export * from "./staff";
 export * from "./sync";
+export * from "./tax";
 export * from "./tenancy";
 export * from "./triage";

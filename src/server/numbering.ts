@@ -80,7 +80,8 @@ export async function nextFormattedNumber(
   db: DbExecutor,
   facility: { id: string; code: string },
   scope: NumberScope,
+  prefix?: string,
 ): Promise<string> {
   const value = await allocateNumber(db, facility.id, scope);
-  return formatNumber(facility.code, scope, value);
+  return formatNumber(prefix?.trim() || facility.code, scope, value);
 }

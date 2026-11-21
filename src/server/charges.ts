@@ -362,11 +362,13 @@ export async function syncEncounterCharges(
   const lockedInvoices = new Set<string>();
   if (invoiceIds.length > 0) {
     const invoiceRows = await tx
-      .select({ id: invoices.id, status: invoices.status })
+      .select({ id: invoices.id, status: invoices.status, finalizedAt: invoices.finalizedAt })
       .from(invoices)
       .where(and(eq(invoices.facilityId, facilityId), inArray(invoices.id, invoiceIds)));
     for (const invoice of invoiceRows) {
-      if (invoice.status === "paid" || invoice.status === "void") lockedInvoices.add(invoice.id);
+      if (invoice.finalizedAt || invoice.status === "paid" || invoice.status === "void") {
+        lockedInvoices.add(invoice.id);
+      }
     }
   }
 

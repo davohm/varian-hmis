@@ -34,6 +34,10 @@ import {
   diagnoses,
   dispenses,
   encounters,
+  etimsInvoiceLines,
+  etimsInvoiceQueue,
+  etimsOutbox,
+  etimsTransmissionLog,
   facilities,
   facilityIdentifiers,
   facilityLicences,
@@ -85,6 +89,8 @@ import {
   supportServiceLicences,
   syncOutbox,
   syncReceived,
+  taxCodeApplicabilities,
+  taxCodes,
   transferAssessments,
   triageVitals,
   user,
@@ -209,10 +215,20 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
     await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));
     await tx.delete(ledgerAccounts).where(eq(ledgerAccounts.facilityId, facilityId));
+    await tx
+      .delete(etimsTransmissionLog)
+      .where(eq(etimsTransmissionLog.facilityId, facilityId));
+    await tx.delete(etimsOutbox).where(eq(etimsOutbox.facilityId, facilityId));
+    await tx.delete(etimsInvoiceLines).where(eq(etimsInvoiceLines.facilityId, facilityId));
+    await tx.delete(etimsInvoiceQueue).where(eq(etimsInvoiceQueue.facilityId, facilityId));
     await tx.delete(payments).where(eq(payments.facilityId, facilityId));
     await tx.delete(charges).where(eq(charges.facilityId, facilityId));
     await tx.delete(invoices).where(eq(invoices.facilityId, facilityId));
     await tx.delete(cashierSessions).where(eq(cashierSessions.facilityId, facilityId));
+    await tx
+      .delete(taxCodeApplicabilities)
+      .where(eq(taxCodeApplicabilities.facilityId, facilityId));
+    await tx.delete(taxCodes).where(eq(taxCodes.facilityId, facilityId));
     await tx.delete(prices).where(eq(prices.facilityId, facilityId));
     await tx.delete(priceLists).where(eq(priceLists.facilityId, facilityId));
     await tx.delete(services).where(eq(services.facilityId, facilityId));

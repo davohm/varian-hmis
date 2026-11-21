@@ -60,10 +60,45 @@ async function registerVisit(browser: Browser, suffix: string): Promise<string> 
     await page.getByTestId("patient-phone").fill(`07${String(Date.now()).slice(-9)}`);
     await page.getByTestId("start-visit-checkbox").check();
     await page.getByTestId("register-patient").click();
+    await page.getByTestId("registration-consent-confirm").click();
 
     const banner = await page.getByTestId("registration-success").innerText();
     const mrn = banner.match(/[A-Z]+-\d{2}-\d{5}/)?.[0];
     expect(mrn, `MRN should be shown in the registration banner: ${banner}`).toBeTruthy();
+
+    const search = await context.request.get(`/api/patients/search?q=${encodeURIComponent(mrn!)}`);
+    expect(search.status()).toBe(200);
+    const patients = ((await search.json()) as { patients: Array<{ id: string; mrn: string }> }).patients;
+    const patient = patients.find((item) => item.mrn === mrn);
+    expect(patient, `Patient ${mrn} should be searchable after registration`).toBeTruthy();
+
+    // Revenue commands refuse to share patient data until payer-sharing consent
+    // exists. Reception captures treatment consent only, so seed the payer
+    // consent through the guarded privacy admin command.
+    const adminContext = await browser.newContext();
+    try {
+      const adminPage = await adminContext.newPage();
+      await signIn(adminPage, "admin@fam.test");
+      const consent = await adminContext.request.post("/api/admin/privacy", {
+        data: {
+          command: "recordConsent",
+          input: {
+            idempotencyKey: randomUUID(),
+            patientId: patient!.id,
+            consentType: "payer_sharing",
+            consentVersion: "v1",
+            granted: true,
+            grantedAt: new Date().toISOString(),
+            grantedBy: `Rev${suffix} Payer`,
+            source: "e2e",
+          },
+        },
+      });
+      expect(consent.status()).toBe(201);
+    } finally {
+      await adminContext.close();
+    }
+
     return mrn!;
   } finally {
     await context.close();

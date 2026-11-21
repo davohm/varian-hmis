@@ -148,3 +148,40 @@ Run `npm run db:seed` first so `FAM` exists. Use only on disposable local/test d
 After any incident, preserve the failing command's exit code and log excerpt (redacted), note the
 last successful backup filename and its SHA-256, and escalate to the platform/database owner.
 Never restore directly onto the live database without a verified scratch restore first.
+
+## 8. KRA eTIMS sandbox / production switch
+
+Each facility has two `integration_settings` rows for `integration = 'etims'`: one `sandbox` and
+one `production`. They are separate configuration: target URL, spec version, OSCU/VSCU mode,
+timeout, retry count, backoff array and `enabled` flag. `db:seed` creates a local sandbox stub
+(`sandbox://kra.etims.local`) and a disabled production placeholder; it never enables production.
+
+Credentials are **never** stored in `integration_settings`, the browser or the repository. The
+`credential_ref` column only names a server environment variable:
+
+| Variable | Purpose |
+| --- | --- |
+| `ETIMS_SANDBOX_API_KEY` | sandbox bearer credential, looked up by `credential_ref` |
+| `ETIMS_PRODUCTION_API_KEY` | production bearer credential, looked up by `credential_ref` |
+| `ETIMS_PRODUCTION_BASE_URL` | expected production target; a sandbox run refuses this URL |
+| `ETIMS_ALLOW_PRODUCTION` | must be exactly `true` before any production transmission |
+
+### Switch to production
+
+1. Finish the full sandbox flow on `/finance/tax`: generate a signature, inspect the QR/control
+   number, retry a forced failure and print the invoice.
+2. Set the facility's production row `base_url`, `spec_version`, `mode`, `max_attempts` and
+   `backoff_seconds` to the KRA-issued values. Keep `enabled = false` until step 4.
+3. Store `ETIMS_PRODUCTION_API_KEY` in the server's secret store and set
+   `ETIMS_PRODUCTION_BASE_URL` to the same URL as the production row. Restart the server.
+4. Confirm the production URL contains no `sandbox` or `/prod` test alias, then set the production
+   row's `enabled = true` and `ETIMS_ALLOW_PRODUCTION=true` on the server. Restart again.
+5. In `/finance/tax`, choose **Production (guarded)** for one real invoice and verify the control
+   number and QR. Acknowledged documents are immutable; corrections are credit notes only.
+
+### Return to sandbox
+
+Set the production row's `enabled = false` and remove `ETIMS_ALLOW_PRODUCTION` from the server.
+Existing acknowledged documents and their credit-note links remain untouched. A sandbox run can
+never write to the production target: the client refuses sandbox requests that resolve to the
+configured production URL, and production requests without the explicit allow flag.

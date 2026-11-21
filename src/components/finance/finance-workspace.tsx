@@ -251,6 +251,9 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
           <Link href="/finance/revenue" className="font-medium text-primary underline">
             Revenue cycle
           </Link>
+          <Link href="/finance/tax" className="font-medium text-primary underline" data-testid="finance-link-tax">
+            KRA eTIMS
+          </Link>
           <span className="text-muted-foreground">
             Dates filter journals, trial balance and the general ledger.
           </span>

@@ -1,9 +1,10 @@
 import { hashPassword } from "better-auth/crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { fromCents, toCents } from "../src/lib/billing";
+import { ETIMS_SANDBOX_STUB_URL } from "../src/lib/tax";
 import {
   DEFAULT_CHART_OF_ACCOUNTS,
   DEFAULT_COST_CENTER,
@@ -20,8 +21,10 @@ import {
   branches,
   facilities,
   facilityRegulatoryProfiles,
+  facilitySettings,
   costCenters,
   icd10Codes,
+  integrationSettings,
   itemBatches,
   items,
   labTests,
@@ -34,6 +37,7 @@ import {
   facilitySyncTokens,
   stockLedger,
   stores,
+  taxCodes,
   user,
   type LabParameter,
   type Role,
@@ -896,6 +900,129 @@ async function upsertStaff(
   return { branchId, count: STAFF_SEEDS.length, password: STAFF_PASSWORD };
 }
 
+/**
+ * Tax and eTIMS defaults. Existing rows win, except the invoice prefix: the
+ * Kenya readiness spec requires FAH, so an older seeded value is corrected.
+ */
+async function seedTaxDefaults(
+  db: ReturnType<typeof createDatabase>["db"],
+  facilityId: string,
+) {
+  await db
+    .update(facilitySettings)
+    .set({ valueText: "FAH", updatedAt: new Date() })
+    .where(
+      and(
+        eq(facilitySettings.facilityId, facilityId),
+        eq(facilitySettings.domain, "tax"),
+        eq(facilitySettings.key, "invoice_prefix"),
+        ne(facilitySettings.valueText, "FAH"),
+      ),
+    );
+
+  const codes = [
+    {
+      code: "VAT_STANDARD",
+      name: "VAT 16%",
+      rate: "16.0000",
+      treatment: "vat_standard" as const,
+      kraCode: "VAT",
+      isDefault: true,
+    },
+    {
+      code: "VAT_ZERO",
+      name: "VAT zero-rated",
+      rate: "0.0000",
+      treatment: "vat_zero" as const,
+      kraCode: "ZERO",
+      isDefault: false,
+    },
+    {
+      code: "EXEMPT",
+      name: "VAT exempt",
+      rate: "0.0000",
+      treatment: "exempt" as const,
+      kraCode: "EXEMPT",
+      isDefault: false,
+    },
+    {
+      code: "OUT_OF_SCOPE",
+      name: "Out of scope",
+      rate: "0.0000",
+      treatment: "out_of_scope" as const,
+      kraCode: null,
+      isDefault: false,
+    },
+  ];
+
+  const insertedCodes = await db
+    .insert(taxCodes)
+    .values(
+      codes.map((code) => ({
+        id: newId(),
+        facilityId,
+        code: code.code,
+        name: code.name,
+        rate: code.rate,
+        treatment: code.treatment,
+        kraCode: code.kraCode,
+        effectiveFrom: "2000-01-01",
+        active: true,
+        isDefault: code.isDefault,
+        createdBy: "seed",
+      })),
+    )
+    .onConflictDoNothing({ target: [taxCodes.facilityId, taxCodes.code, taxCodes.effectiveFrom] })
+    .returning({ id: taxCodes.id });
+
+  const integrations = await db
+    .insert(integrationSettings)
+    .values([
+      {
+        id: newId(),
+        facilityId,
+        integration: "etims",
+        environment: "sandbox",
+        baseUrl: ETIMS_SANDBOX_STUB_URL,
+        mode: "oscu",
+        specVersion: "oscu-1.0",
+        credentialRef: "ETIMS_SANDBOX_API_KEY",
+        timeoutMs: 30_000,
+        maxAttempts: 5,
+        backoffSeconds: [1, 2, 4, 8, 16],
+        enabled: true,
+        lastVerifiedAt: null,
+        createdBy: "seed",
+      },
+      {
+        id: newId(),
+        facilityId,
+        integration: "etims",
+        environment: "production",
+        baseUrl: process.env.ETIMS_PRODUCTION_BASE_URL || "https://etims.kra.example/production",
+        mode: "oscu",
+        specVersion: "oscu-1.0",
+        credentialRef: "ETIMS_PRODUCTION_API_KEY",
+        timeoutMs: 30_000,
+        maxAttempts: 5,
+        backoffSeconds: [30, 120, 600, 1800, 3600],
+        enabled: false,
+        lastVerifiedAt: null,
+        createdBy: "seed",
+      },
+    ])
+    .onConflictDoNothing({
+      target: [
+        integrationSettings.facilityId,
+        integrationSettings.integration,
+        integrationSettings.environment,
+      ],
+    })
+    .returning({ id: integrationSettings.id });
+
+  return { codesSeeded: insertedCodes.length, integrationsSeeded: integrations.length };
+}
+
 async function seed() {
   const { pool, db } = createDatabase(DATABASE_URL);
 
@@ -906,6 +1033,7 @@ async function seed() {
     const staff = await upsertStaff(db, facility.id, branch.id);
     const regulatory = await upsertRegulatoryProfile(db, facility.id);
     const settingsSeeded = await seedRegulatoryDefaults(db, facility.id);
+    const tax = await seedTaxDefaults(db, facility.id);
 
     const syncToken = process.env.FACILITY_SYNC_TOKEN;
     const syncDeviceKey = process.env.FACILITY_DEVICE_KEY?.trim() || "clinic-server";
@@ -963,6 +1091,7 @@ async function seed() {
           billing,
           pharmacyStock,
           regulatory: { ...regulatory, settingsSeeded },
+          tax,
         },
         null,
         2,

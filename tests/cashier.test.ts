@@ -990,12 +990,12 @@ describe("invoices", () => {
       const firstVisit = await createVisit(fixture);
       await consult(fixture, firstVisit);
       const first = await bill(fixture, firstVisit);
-      expect(first.invoiceNo).toBe(formatNumber(fixture.facility.code, "invoice", 1));
+      expect(first.invoiceNo).toBe(formatNumber("FAH", "invoice", 1));
 
       const secondVisit = await createVisit(fixture);
       await consult(fixture, secondVisit);
       const second = await bill(fixture, secondVisit);
-      expect(second.invoiceNo).toBe(formatNumber(fixture.facility.code, "invoice", 2));
+      expect(second.invoiceNo).toBe(formatNumber("FAH", "invoice", 2));
 
       await orderLabs(fixture, firstVisit, [fixture.labTest.id]);
       const refreshed = await bill(fixture, firstVisit);

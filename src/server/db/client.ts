@@ -4,6 +4,8 @@ import { Pool } from "pg";
 import { DATABASE_URL } from "../env";
 import * as schema from "./schema";
 
+export type AppDatabase = ReturnType<typeof drizzle<typeof schema>>;
+
 export function createDatabase(connectionString: string) {
   const pool = new Pool({
     connectionString,

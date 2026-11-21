@@ -154,6 +154,8 @@ export const invoices = pgTable(
     paid: numeric("paid", { precision: 12, scale: 2 }).notNull().default("0"),
     status: invoiceStatusEnum("status").notNull().default("open"),
     notes: text("notes"),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    finalizedBy: text("finalized_by"),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
     voidedBy: text("voided_by"),
     ...auditColumns,
@@ -165,7 +167,7 @@ export const invoices = pgTable(
     ),
     activeEncounterIdx: uniqueIndex("invoices_active_encounter_idx")
       .on(table.facilityId, table.encounterId)
-      .where(sql`${table.status} in ('open', 'partial')`),
+      .where(sql`${table.status} in ('open', 'partial') and ${table.finalizedAt} is null`),
     facilityStatusIdx: index("invoices_facility_status_idx").on(table.facilityId, table.status),
     facilityEncounterIdx: index("invoices_facility_encounter_idx").on(
       table.facilityId,

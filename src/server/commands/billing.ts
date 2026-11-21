@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -20,6 +20,7 @@ import {
   charges,
   encounters,
   facilities,
+  facilitySettings,
   invoices,
   payments,
 } from "@/server/db/schema";
@@ -59,6 +60,30 @@ async function loadFacility(tx: CommandTransaction, facilityId: string) {
   const facility = rows[0];
   if (!facility) throw new Error("Facility not found");
   return facility;
+}
+
+/** Invoice numbering uses the effective tax setting, not the facility code. */
+async function loadInvoicePrefix(tx: CommandTransaction, facilityId: string): Promise<string> {
+  const date = today();
+  const rows = await tx
+    .select({ valueText: facilitySettings.valueText })
+    .from(facilitySettings)
+    .where(
+      and(
+        eq(facilitySettings.facilityId, facilityId),
+        eq(facilitySettings.domain, "tax"),
+        eq(facilitySettings.key, "invoice_prefix"),
+        lte(facilitySettings.effectiveFrom, date),
+        or(isNull(facilitySettings.effectiveTo), sql`${facilitySettings.effectiveTo} >= ${date}`),
+      ),
+    )
+    .orderBy(desc(facilitySettings.effectiveFrom))
+    .limit(1);
+  const prefix = rows[0]?.valueText?.trim();
+  if (!prefix || !/^[A-Z]{2,6}$/.test(prefix)) {
+    throw new Error("tax.invoice_prefix must be configured before invoices can be numbered");
+  }
+  return prefix;
 }
 
 async function loadOpenSession(
@@ -189,6 +214,7 @@ export async function openInvoice(
             eq(invoices.facilityId, values.facilityId),
             eq(invoices.encounterId, encounter.id),
             inArray(invoices.status, ["open", "partial"]),
+            isNull(invoices.finalizedAt),
           ),
         )
         .limit(1)
@@ -253,7 +279,8 @@ export async function openInvoice(
       }
 
       const facility = await loadFacility(tx, values.facilityId);
-      const invoiceNo = await nextFormattedNumber(tx, facility, "invoice");
+      const prefix = await loadInvoicePrefix(tx, values.facilityId);
+      const invoiceNo = await nextFormattedNumber(tx, facility, "invoice", prefix);
       const total = fromCents(
         billable.reduce((sum, charge) => sum + toCents(charge.amount), 0),
       );
@@ -387,6 +414,9 @@ export async function voidInvoice(
       const invoice = rows[0];
       if (!invoice) throw new Error("Invoice not found in this facility");
       if (invoice.status === "void") throw new Error("This invoice is already void");
+      if (invoice.finalizedAt) {
+        throw new Error("A finalised invoice cannot be voided; issue a credit note instead");
+      }
       if (toCents(invoice.paid) !== 0) {
         throw new Error("Reverse the payments before voiding this invoice");
       }
