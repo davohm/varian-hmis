@@ -43,6 +43,41 @@ export const BUDGET_STATUS_LABELS: Record<BudgetStatus, string> = {
   rejected: "Rejected",
 };
 
+/* ------------------------------------------------------------------ */
+/* Finance approval limits                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The finance commands whose value can be capped by role. Automation uses
+ * postJournal directly and is deliberately not capped here: limits govern a
+ * person acting through a manual command.
+ */
+export const FINANCE_APPROVAL_ACTIONS = ["postManualJournal", "reverseJournal"] as const;
+export type FinanceApprovalAction = (typeof FINANCE_APPROVAL_ACTIONS)[number];
+
+export const FINANCE_APPROVAL_ACTION_LABELS: Record<FinanceApprovalAction, string> = {
+  postManualJournal: "Post manual journal",
+  reverseJournal: "Reverse journal",
+};
+
+/** Roles that can hold a finance approval limit. Limits are never defaulted. */
+export const FINANCE_APPROVAL_ROLES = ["accountant", "finance_officer", "admin"] as const;
+export type FinanceApprovalRole = (typeof FINANCE_APPROVAL_ROLES)[number];
+
+export const FINANCE_APPROVAL_ROLE_LABELS: Record<FinanceApprovalRole, string> = {
+  accountant: "Accountant",
+  finance_officer: "Finance Officer",
+  admin: "Administrator",
+};
+
+export function isFinanceApprovalAction(value: string): value is FinanceApprovalAction {
+  return (FINANCE_APPROVAL_ACTIONS as readonly string[]).includes(value);
+}
+
+export function isFinanceApprovalRole(value: string): value is FinanceApprovalRole {
+  return (FINANCE_APPROVAL_ROLES as readonly string[]).includes(value);
+}
+
 export interface JournalLineInput {
   debit: string | number;
   credit: string | number;

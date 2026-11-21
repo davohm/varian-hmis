@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { ApprovalLimitsPanel } from "@/components/finance/finance-approval-limits-panel";
 import { BankingPanel } from "@/components/finance/finance-banking-panel";
 import {
   AccountsPanel,
@@ -42,6 +43,7 @@ const EMPTY_DATA: FinanceData = {
   reconciliations: [],
   trialBalance: null,
   generalLedger: null,
+  approvalLimits: [],
 };
 
 const TABS: Array<{ id: FinanceTab; label: string }> = [
@@ -89,7 +91,13 @@ function Kpi({ label, value, helper, icon, tone, testId }: KpiProps) {
   );
 }
 
-export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
+export function FinanceWorkspace({
+  canWrite,
+  canManageApprovalLimits,
+}: {
+  canWrite: boolean;
+  canManageApprovalLimits: boolean;
+}) {
   const [data, setData] = useState<FinanceData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +105,10 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
   const [from, setFrom] = useState(monthStartIso());
   const [to, setTo] = useState(todayIso());
   const [accountId, setAccountId] = useState("");
+
+  const tabs: Array<{ id: FinanceTab; label: string }> = canManageApprovalLimits
+    ? [...TABS, { id: "limits", label: "Approval limits" }]
+    : TABS;
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -261,7 +273,7 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
       </div>
 
       <div role="tablist" aria-label="Finance sections" className="flex flex-wrap gap-1 border-b border-border">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -309,6 +321,9 @@ export function FinanceWorkspace({ canWrite }: { canWrite: boolean }) {
           {activeTab === "trial" ? <TrialBalancePanel {...panelProps} /> : null}
           {activeTab === "ledger" ? <GeneralLedgerPanel {...panelProps} /> : null}
           {activeTab === "banking" ? <BankingPanel {...panelProps} /> : null}
+          {activeTab === "limits" && canManageApprovalLimits ? (
+            <ApprovalLimitsPanel data={data} refresh={refresh} />
+          ) : null}
         </div>
       )}
     </div>

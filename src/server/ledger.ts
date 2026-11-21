@@ -37,6 +37,8 @@ export interface PostJournalInput {
   userId?: string | null;
   ip?: string | null;
   deviceId?: string | null;
+  /** Approval decided by a manual command; automation posts without one. */
+  approval?: { role: string; maxAmount: string } | null;
 }
 
 export interface PostedJournal {
@@ -376,6 +378,8 @@ export async function postJournal(
       debit: totals.debit,
       credit: totals.credit,
       lineCount: resolved.length,
+      approvalRole: input.approval?.role ?? null,
+      approvalLimit: input.approval?.maxAmount ?? null,
     },
     ip: input.ip,
     deviceId: input.deviceId,

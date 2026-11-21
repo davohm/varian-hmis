@@ -77,6 +77,7 @@ export const SYNC_OUTBOUND_TABLES = [
   "bank_reconciliations",
   "budgets",
   "budget_lines",
+  "finance_approval_limits",
   "report_definitions",
   "report_runs",
   "report_cells",

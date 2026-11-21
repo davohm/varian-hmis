@@ -3,21 +3,31 @@ import { z } from "zod";
 
 import { fromCents, toCents } from "@/lib/billing";
 import {
+  FINANCE_APPROVAL_ACTION_LABELS,
+  FINANCE_APPROVAL_ACTIONS,
+  FINANCE_APPROVAL_ROLES,
   LEDGER_ACCOUNT_TYPES,
+  journalTotals,
   normalBalanceFor,
+  type FinanceApprovalAction,
+  type FinanceApprovalRole,
   type LedgerAccountType,
 } from "@/lib/finance";
 import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
+import { ForbiddenError } from "@/server/auth/guards";
 import {
   bankAccounts,
   bankReconciliations,
   bankTransactions,
   costCenters,
   fiscalPeriods,
+  financeApprovalLimits,
   journalEntries,
   journalLines,
   ledgerAccounts,
+  staffRoleScopes,
+  user,
 } from "@/server/db/schema";
 import { postJournal } from "@/server/ledger";
 import { publishEvent } from "@/server/events";
@@ -42,6 +52,95 @@ const isoDate = z
 const money = z
   .union([z.string(), z.number()])
   .transform((value) => fromCents(toCents(value)));
+
+/* ------------------------------------------------------------------ */
+/* Approval control helpers                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Resolve the roles that grant authority at a facility. Scopes are read from
+ * the database, never from client input, so a caller cannot raise their own
+ * ceiling by changing the actor payload.
+ */
+async function financeActorRoles(
+  tx: CommandTransaction,
+  facilityId: string,
+  userId: string,
+): Promise<string[]> {
+  const scopes = await tx
+    .select({ role: staffRoleScopes.role })
+    .from(staffRoleScopes)
+    .where(
+      and(eq(staffRoleScopes.userId, userId), eq(staffRoleScopes.facilityId, facilityId)),
+    );
+  const roles = scopes.map((scope) => scope.role as string);
+  // The first super admin may only carry Better Auth's legacy admin flag.
+  const accounts = await tx
+    .select({ role: user.role })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  if (accounts[0]?.role === "admin" && !roles.includes("admin")) roles.push("admin");
+  return roles;
+}
+
+async function assertFinanceAdministrator(
+  tx: CommandTransaction,
+  facilityId: string,
+  userId: string,
+): Promise<void> {
+  const roles = await financeActorRoles(tx, facilityId, userId);
+  if (!roles.includes("admin")) {
+    throw new ForbiddenError("Only administrators can configure finance approval limits");
+  }
+}
+
+export interface AppliedApprovalLimit {
+  role: string;
+  maxAmount: string;
+}
+
+/**
+ * Enforce a configured ceiling. An unconfigured action keeps the historical
+ * unrestricted flow; once a ceiling exists, a role without a limit row cannot
+ * perform the action, and no role may exceed its configured amount.
+ */
+export async function assertFinanceApprovalLimit(
+  tx: CommandTransaction,
+  facilityId: string,
+  userId: string,
+  action: FinanceApprovalAction,
+  amountCents: number,
+): Promise<AppliedApprovalLimit | null> {
+  const limits = await tx
+    .select({ role: financeApprovalLimits.role, maxAmount: financeApprovalLimits.maxAmount })
+    .from(financeApprovalLimits)
+    .where(
+      and(
+        eq(financeApprovalLimits.facilityId, facilityId),
+        eq(financeApprovalLimits.action, action),
+        eq(financeApprovalLimits.active, true),
+      ),
+    );
+  if (limits.length === 0) return null;
+
+  const roles = new Set(await financeActorRoles(tx, facilityId, userId));
+  const eligible = limits.filter((limit) => roles.has(limit.role));
+  if (eligible.length === 0) {
+    throw new ForbiddenError(
+      `No ${FINANCE_APPROVAL_ACTION_LABELS[action]} approval limit is configured for your role`,
+    );
+  }
+  const applied = eligible.reduce((best, limit) =>
+    toCents(limit.maxAmount) > toCents(best.maxAmount) ? limit : best,
+  );
+  if (amountCents > toCents(applied.maxAmount)) {
+    throw new Error(
+      `${FINANCE_APPROVAL_ACTION_LABELS[action]} of ${fromCents(amountCents)} exceeds your approval limit of ${applied.maxAmount}`,
+    );
+  }
+  return { role: applied.role, maxAmount: applied.maxAmount };
+}
 
 /* ------------------------------------------------------------------ */
 /* Chart of accounts                                                   */
@@ -511,8 +610,15 @@ export async function postManualJournal(
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
     "postManualJournal",
-    async (tx) =>
-      postJournal(tx, {
+    async (tx) => {
+      const approval = await assertFinanceApprovalLimit(
+        tx,
+        values.facilityId,
+        userId,
+        "postManualJournal",
+        journalTotals(values.lines).debitCents,
+      );
+      return postJournal(tx, {
         facilityId: values.facilityId,
         entryDate: values.entryDate,
         description: values.description,
@@ -521,7 +627,9 @@ export async function postManualJournal(
         userId,
         ip: values.actor.ip,
         deviceId: values.actor.deviceId,
-      }),
+        approval,
+      });
+    },
     options,
   );
 }
@@ -581,6 +689,17 @@ export async function reverseJournal(
         .orderBy(asc(journalLines.lineNo));
       if (lines.length === 0) throw new Error("This journal has no lines to reverse");
 
+      const amountCents = journalTotals(
+        lines.map((line) => ({ debit: line.debit, credit: line.credit })),
+      ).debitCents;
+      const approval = await assertFinanceApprovalLimit(
+        tx,
+        values.facilityId,
+        userId,
+        "reverseJournal",
+        amountCents,
+      );
+
       const reversal = await postJournal(tx, {
         facilityId: values.facilityId,
         entryDate: values.entryDate,
@@ -597,6 +716,7 @@ export async function reverseJournal(
         userId,
         ip: values.actor.ip,
         deviceId: values.actor.deviceId,
+        approval,
       });
 
       const now = new Date();
@@ -637,6 +757,8 @@ export async function reverseJournal(
           reversalEntryNo: reversal.entryNo,
           amount: reversal.debit,
           reason: values.reason,
+          approvalRole: approval?.role ?? null,
+          approvalLimit: approval?.maxAmount ?? null,
         },
         deviceId: values.actor.deviceId,
         ip: values.actor.ip,
@@ -656,6 +778,119 @@ export async function reverseJournal(
         originalEntryId: entry.id,
         originalEntryNo: entry.entryNo,
         amount: reversal.debit,
+      };
+    },
+    options,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Approval limits                                                     */
+/* ------------------------------------------------------------------ */
+
+export const setFinanceApprovalLimitSchema = z.object({
+  ...baseSchema,
+  action: z.enum(FINANCE_APPROVAL_ACTIONS),
+  role: z.enum(FINANCE_APPROVAL_ROLES),
+  maxAmount: z
+    .union([z.string(), z.number()])
+    .transform((value) => fromCents(toCents(value)))
+    .refine((value) => toCents(value) > 0, "An approval limit must be greater than zero"),
+  active: z.boolean().default(true),
+});
+
+export type SetFinanceApprovalLimitInput = z.input<typeof setFinanceApprovalLimitSchema>;
+export interface FinanceApprovalLimitResult {
+  limitId: string;
+  action: FinanceApprovalAction;
+  role: FinanceApprovalRole;
+  maxAmount: string;
+  active: boolean;
+}
+
+/**
+ * Configure a facility's ceiling for one role and finance action. Limited to
+ * administrators and always audited with the previous and new values.
+ */
+export async function setFinanceApprovalLimit(
+  input: SetFinanceApprovalLimitInput,
+  options: CommandOptions = {},
+): Promise<FinanceApprovalLimitResult> {
+  const values = setFinanceApprovalLimitSchema.parse(input);
+  const userId = actorId(values);
+
+  return runCommand(
+    { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
+    "setFinanceApprovalLimit",
+    async (tx) => {
+      await assertFinanceAdministrator(tx, values.facilityId, userId);
+
+      const existing = await tx
+        .select()
+        .from(financeApprovalLimits)
+        .where(
+          and(
+            eq(financeApprovalLimits.facilityId, values.facilityId),
+            eq(financeApprovalLimits.action, values.action),
+            eq(financeApprovalLimits.role, values.role),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      const previous = existing[0];
+      const limitId = previous?.id ?? newId();
+      const now = new Date();
+
+      if (previous) {
+        await tx
+          .update(financeApprovalLimits)
+          .set({
+            maxAmount: values.maxAmount,
+            active: values.active,
+            updatedAt: now,
+            version: sql`${financeApprovalLimits.version} + 1`,
+          })
+          .where(
+            and(
+              eq(financeApprovalLimits.id, limitId),
+              eq(financeApprovalLimits.facilityId, values.facilityId),
+            ),
+          );
+      } else {
+        await tx.insert(financeApprovalLimits).values({
+          id: limitId,
+          facilityId: values.facilityId,
+          action: values.action,
+          role: values.role,
+          maxAmount: values.maxAmount,
+          active: values.active,
+          createdBy: userId,
+        });
+      }
+
+      await recordAudit(tx, {
+        facilityId: values.facilityId,
+        userId,
+        action: "finance_approval_limit.set",
+        module: "finance",
+        entity: "finance_approval_limits",
+        entityId: limitId,
+        details: {
+          action: values.action,
+          role: values.role,
+          before: previous ? { maxAmount: previous.maxAmount, active: previous.active } : null,
+          after: { maxAmount: values.maxAmount, active: values.active },
+        },
+        deviceId: values.actor.deviceId,
+        ip: values.actor.ip,
+      });
+
+      return {
+        limitId,
+        action: values.action,
+        role: values.role,
+        maxAmount: values.maxAmount,
+        active: values.active,
       };
     },
     options,

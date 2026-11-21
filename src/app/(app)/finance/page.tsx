@@ -14,7 +14,10 @@ export default async function FinancePage() {
       testId="screen-finance"
       role={staff.role}
     >
-      <FinanceWorkspace canWrite={canWrite} />
+      <FinanceWorkspace
+        canWrite={canWrite}
+        canManageApprovalLimits={staff.role === "admin"}
+      />
     </Screen>
   );
 }

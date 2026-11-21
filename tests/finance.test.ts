@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -23,6 +23,7 @@ import {
   postManualJournal,
   recordBankTransaction,
   reverseJournal,
+  setFinanceApprovalLimit,
 } from "../src/server/commands/finance";
 import {
   createClaim,
@@ -34,11 +35,15 @@ import {
   transitionClaim,
 } from "../src/server/commands/revenue";
 import {
+  auditLog,
   dataConsents,
   encounters,
   invoices,
   patients,
   remittances,
+  staffRoleScopes,
+  syncOutbox,
+  user,
 } from "../src/server/db/schema";
 import {
   getFinanceOverview,
@@ -46,6 +51,7 @@ import {
   getGeneralLedger,
   getJournal,
   getTrialBalance,
+  listFinanceApprovalLimits,
   listFiscalPeriods,
   listLedgerAccounts,
 } from "../src/server/queries/finance";
@@ -59,6 +65,7 @@ import {
 import {
   cleanupTestFacility,
   createTestDatabase,
+  insertTestActor,
   insertTestBranch,
   insertTestFacility,
   type TestDatabase,
@@ -1044,6 +1051,243 @@ describe("financial statements", () => {
       expect(byPeriod.filters.from).toBe(period.startDate);
       expect(byPeriod.filters.to).toBe(period.endDate);
       expect(byPeriod.incomeStatement.totalRevenue).toBe("350.00");
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Approval limits                                                     */
+/* ------------------------------------------------------------------ */
+describe("finance approval limits", () => {
+  async function makeActor(
+    facilityId: string,
+    role: "admin" | "accountant" | "finance_officer",
+  ): Promise<string> {
+    const userId = await insertTestActor(ctx.db);
+    if (role !== "admin") {
+      await ctx.db.update(user).set({ role: "user" }).where(eq(user.id, userId));
+    }
+    await ctx.db.insert(staffRoleScopes).values({ userId, role, facilityId });
+    return userId;
+  }
+
+  function postAs(
+    userId: string,
+    facilityId: string,
+    accounts: Record<string, string>,
+    amount: string,
+  ) {
+    return postManualJournal(
+      {
+        facilityId,
+        idempotencyKey: newIdempotencyKey(),
+        actor: { userId },
+        entryDate: ENTRY_DATE,
+        description: "Approval limit test journal",
+        lines: [
+          { accountId: accounts.cash, debit: amount, credit: 0 },
+          { accountId: accounts.service_revenue, debit: 0, credit: amount },
+        ],
+      },
+      { database: ctx.db },
+    );
+  }
+
+  it("lets an administrator configure, replay, update and list ceilings with an audit and outbox row", async () => {
+    await withFinanceFacility(async ({ facility }) => {
+      const admin = await makeActor(facility.id, "admin");
+      const key = newIdempotencyKey();
+      const input = {
+        facilityId: facility.id,
+        idempotencyKey: key,
+        actor: { userId: admin },
+        action: "postManualJournal" as const,
+        role: "accountant" as const,
+        maxAmount: "50000.00",
+      };
+
+      const created = await setFinanceApprovalLimit(input, { database: ctx.db });
+      expect(created).toMatchObject({
+        action: "postManualJournal",
+        role: "accountant",
+        maxAmount: "50000.00",
+        active: true,
+      });
+
+      const replay = await setFinanceApprovalLimit(input, { database: ctx.db });
+      expect(replay.limitId).toBe(created.limitId);
+
+      const updated = await setFinanceApprovalLimit(
+        { ...input, idempotencyKey: newIdempotencyKey(), maxAmount: "75000.00", active: false },
+        { database: ctx.db },
+      );
+      expect(updated).toMatchObject({ maxAmount: "75000.00", active: false });
+
+      const limits = await listFinanceApprovalLimits(ctx.db, facility.id);
+      expect(limits).toHaveLength(1);
+      expect(limits[0]).toMatchObject({
+        action: "postManualJournal",
+        role: "accountant",
+        maxAmount: "75000.00",
+        active: false,
+      });
+
+      const audits = await ctx.db
+        .select()
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.facilityId, facility.id),
+            eq(auditLog.action, "finance_approval_limit.set"),
+          ),
+        );
+      expect(audits.length).toBeGreaterThan(0);
+      expect(audits[0]?.details).toMatchObject({ role: "accountant", action: "postManualJournal" });
+
+      const outbox = await ctx.db
+        .select()
+        .from(syncOutbox)
+        .where(
+          and(
+            eq(syncOutbox.facilityId, facility.id),
+            eq(syncOutbox.tableName, "finance_approval_limits"),
+            eq(syncOutbox.recordId, created.limitId),
+          ),
+        );
+      expect(outbox.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("refuses to let a non-administrator configure limits", async () => {
+    await withFinanceFacility(async ({ facility }) => {
+      const officer = await makeActor(facility.id, "finance_officer");
+      await expect(
+        setFinanceApprovalLimit(
+          {
+            facilityId: facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: { userId: officer },
+            action: "postManualJournal",
+            role: "finance_officer",
+            maxAmount: "1000000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/only administrators/i);
+    });
+  });
+
+  it("enforces the ceiling on manual postings and records the applied role", async () => {
+    await withFinanceFacility(async ({ facility, accounts }) => {
+      const admin = await makeActor(facility.id, "admin");
+      const accountant = await makeActor(facility.id, "accountant");
+      await setFinanceApprovalLimit(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: { userId: admin },
+          action: "postManualJournal",
+          role: "accountant",
+          maxAmount: "1000.00",
+        },
+        { database: ctx.db },
+      );
+
+      const allowed = await postAs(accountant, facility.id, accounts, "1000.00");
+      expect(allowed.debit).toBe("1000.00");
+
+      await expect(postAs(accountant, facility.id, accounts, "1000.01")).rejects.toThrow(
+        /exceeds your approval limit/i,
+      );
+
+      const journalAudit = await ctx.db
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.facilityId, facility.id), eq(auditLog.action, "journal.post")));
+      expect(journalAudit[0]?.details).toMatchObject({
+        approvalRole: "accountant",
+        approvalLimit: "1000.00",
+      });
+    });
+  });
+
+  it("rejects a role with no configured ceiling once the action is configured", async () => {
+    await withFinanceFacility(async ({ facility, accounts }) => {
+      const admin = await makeActor(facility.id, "admin");
+      const officer = await makeActor(facility.id, "finance_officer");
+      await setFinanceApprovalLimit(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: { userId: admin },
+          action: "postManualJournal",
+          role: "accountant",
+          maxAmount: "1000.00",
+        },
+        { database: ctx.db },
+      );
+
+      await expect(postAs(officer, facility.id, accounts, "1.00")).rejects.toThrow(
+        /no post manual journal approval limit is configured for your role/i,
+      );
+    });
+  });
+
+  it("applies a separate ceiling to reversals", async () => {
+    await withFinanceFacility(async ({ facility, accounts }) => {
+      const admin = await makeActor(facility.id, "admin");
+      const accountant = await makeActor(facility.id, "accountant");
+      const entry = await postSimpleJournal(facility.id, accounts.cash, accounts.service_revenue, "500.00");
+
+      await setFinanceApprovalLimit(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: { userId: admin },
+          action: "reverseJournal",
+          role: "accountant",
+          maxAmount: "100.00",
+        },
+        { database: ctx.db },
+      );
+
+      await expect(
+        reverseJournal(
+          {
+            facilityId: facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: { userId: accountant },
+            entryId: entry.entryId,
+            entryDate: ENTRY_DATE,
+            reason: "Testing the reversal ceiling",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/exceeds your approval limit/i);
+
+      await setFinanceApprovalLimit(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: { userId: admin },
+          action: "reverseJournal",
+          role: "accountant",
+          maxAmount: "1000.00",
+        },
+        { database: ctx.db },
+      );
+      const reversal = await reverseJournal(
+        {
+          facilityId: facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: { userId: accountant },
+          entryId: entry.entryId,
+          entryDate: ENTRY_DATE,
+          reason: "Testing the reversal ceiling",
+        },
+        { database: ctx.db },
+      );
+      expect(reversal.amount).toBe("500.00");
     });
   });
 });

@@ -176,6 +176,13 @@
       "when": 1795252000000,
       "tag": "0024_node_role_application_name",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795285475742,
+      "tag": "0025_spooky_ikaris",
+      "breakpoints": true
     }
   ]
 }

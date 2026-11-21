@@ -1,7 +1,13 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql, type SQL } from "drizzle-orm";
 
 import { fromCents, toCents } from "@/lib/billing";
-import { accountBalance, trialBalanceIsBalanced, type NormalBalance } from "@/lib/finance";
+import {
+  accountBalance,
+  trialBalanceIsBalanced,
+  type FinanceApprovalAction,
+  type FinanceApprovalRole,
+  type NormalBalance,
+} from "@/lib/finance";
 import { db } from "@/server/db/client";
 import {
   bankAccounts,
@@ -10,6 +16,7 @@ import {
   branches,
   costCenters,
   fiscalPeriods,
+  financeApprovalLimits,
   journalEntries,
   journalLines,
   ledgerAccounts,
@@ -1274,4 +1281,35 @@ export async function getFinanceOverview(
     trialBalanceBalanced: trial.balanced,
     hasChartOfAccounts: accounts.length > 0,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Approval limits                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface FinanceApprovalLimitRow {
+  id: string;
+  action: FinanceApprovalAction;
+  role: FinanceApprovalRole;
+  maxAmount: string;
+  active: boolean;
+}
+
+/** Every configured ceiling for a facility, ordered for display. */
+export async function listFinanceApprovalLimits(
+  database: FinanceDatabase,
+  facilityId: string,
+): Promise<FinanceApprovalLimitRow[]> {
+  const rows = await database
+    .select({
+      id: financeApprovalLimits.id,
+      action: financeApprovalLimits.action,
+      role: financeApprovalLimits.role,
+      maxAmount: financeApprovalLimits.maxAmount,
+      active: financeApprovalLimits.active,
+    })
+    .from(financeApprovalLimits)
+    .where(eq(financeApprovalLimits.facilityId, facilityId))
+    .orderBy(asc(financeApprovalLimits.action), asc(financeApprovalLimits.role));
+  return rows as FinanceApprovalLimitRow[];
 }

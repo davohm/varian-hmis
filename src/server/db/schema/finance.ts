@@ -383,6 +383,35 @@ export const budgetLines = pgTable(
   }),
 );
 
+/**
+ * Data-driven approval ceilings. A facility's administrator configures a
+ * maximum value per role and finance action. No amounts are seeded: an
+ * unconfigured action keeps the existing unrestricted flow, while a configured
+ * action fails closed for roles that have no limit row.
+ */
+export const financeApprovalLimits = pgTable(
+  "finance_approval_limits",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    action: varchar("action", { length: 64 }).notNull(),
+    role: varchar("role", { length: 32 }).notNull(),
+    maxAmount: numeric("max_amount", { precision: 14, scale: 2 }).notNull(),
+    active: boolean("active").notNull().default(true),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityActionRoleIdx: uniqueIndex("finance_approval_limits_facility_action_role_idx").on(
+      table.facilityId,
+      table.action,
+      table.role,
+    ),
+    facilityIdx: index("finance_approval_limits_facility_idx").on(table.facilityId),
+  }),
+);
+
 export type LedgerAccount = typeof ledgerAccounts.$inferSelect;
 export type NewLedgerAccount = typeof ledgerAccounts.$inferInsert;
 export type CostCenter = typeof costCenters.$inferSelect;
@@ -403,3 +432,5 @@ export type Budget = typeof budgets.$inferSelect;
 export type NewBudget = typeof budgets.$inferInsert;
 export type BudgetLine = typeof budgetLines.$inferSelect;
 export type NewBudgetLine = typeof budgetLines.$inferInsert;
+export type FinanceApprovalLimit = typeof financeApprovalLimits.$inferSelect;
+export type NewFinanceApprovalLimit = typeof financeApprovalLimits.$inferInsert;

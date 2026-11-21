@@ -19,6 +19,10 @@ Specification for rebuilding Varian HMIS from scratch on:
 9. [09-erp-scope.md](09-erp-scope.md) — ERP domains, data model, phases and post-V1 build prompts
 10. [10-kenya-facility-readiness.md](10-kenya-facility-readiness.md) — Kenyan regulatory requirements (KMPDC, ODPC, SHA, KRA, MOH) and build prompts 18–22
 
+## Tracking
+
+- [Implementation plan](../IMPLEMENTATION-PLAN.md) — current phase status and pending work, including **Phase 0 — Initial Configuration**.
+
 ## Non-negotiables
 - One write authority per facility (clinic server in local mode, cloud otherwise).
 - UUIDv7 primary keys; every operational row carries `facility_id`.

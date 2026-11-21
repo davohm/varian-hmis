@@ -16,6 +16,7 @@ import {
   openFiscalPeriod,
   postManualJournal,
   recordBankTransaction,
+  setFinanceApprovalLimit,
   reverseJournal,
   updateLedgerAccount,
 } from "@/server/commands/finance";
@@ -23,6 +24,7 @@ import {
   getFinanceOverview,
   getGeneralLedger,
   getTrialBalance,
+  listFinanceApprovalLimits,
   listBankAccounts,
   listBankReconciliations,
   listBankTransactions,
@@ -51,6 +53,8 @@ const commands: Record<string, (input: Record<string, unknown>) => Promise<unkno
     openBankReconciliation(input as Parameters<typeof openBankReconciliation>[0]),
   completeBankReconciliation: (input) =>
     completeBankReconciliation(input as Parameters<typeof completeBankReconciliation>[0]),
+  setFinanceApprovalLimit: (input) =>
+    setFinanceApprovalLimit(input as Parameters<typeof setFinanceApprovalLimit>[0]),
 };
 
 export async function GET(request: NextRequest) {
@@ -72,6 +76,7 @@ export async function GET(request: NextRequest) {
       reconciliations,
       trialBalance,
       generalLedger,
+      approvalLimits,
     ] = await Promise.all([
       getFinanceOverview(db, facilityId).catch(() => null),
       listLedgerAccounts(db, facilityId),
@@ -83,6 +88,7 @@ export async function GET(request: NextRequest) {
       listBankReconciliations(db, facilityId),
       getTrialBalance(db, facilityId, { from, to }),
       accountId ? getGeneralLedger(db, facilityId, accountId, { from, to }) : Promise.resolve(null),
+      listFinanceApprovalLimits(db, facilityId),
     ]);
 
     return NextResponse.json({
@@ -96,6 +102,7 @@ export async function GET(request: NextRequest) {
       reconciliations,
       trialBalance,
       generalLedger,
+      approvalLimits,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {

@@ -1,6 +1,23 @@
 /** Shapes returned by /api/finance and the shared command client. */
 
-export type FinanceTab = "accounts" | "periods" | "journals" | "trial" | "ledger" | "banking";
+import type { FinanceApprovalAction, FinanceApprovalRole } from "@/lib/finance";
+
+export type FinanceTab =
+  | "accounts"
+  | "periods"
+  | "journals"
+  | "trial"
+  | "ledger"
+  | "banking"
+  | "limits";
+
+export interface FinanceApprovalLimitRow {
+  id: string;
+  action: FinanceApprovalAction;
+  role: FinanceApprovalRole;
+  maxAmount: string;
+  active: boolean;
+}
 
 export interface LedgerAccountRow {
   id: string;
@@ -147,6 +164,7 @@ export interface FinanceData {
   reconciliations: BankReconciliationRow[];
   trialBalance: TrialBalance | null;
   generalLedger: GeneralLedger | null;
+  approvalLimits: FinanceApprovalLimitRow[];
 }
 
 export interface FinancePanelProps {

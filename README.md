@@ -2,6 +2,10 @@
 
 Varian HMIS is a Next.js-based hospital/facility management information system for Kenyan healthcare facilities. It covers patient registration and reception, triage, clinical encounters, laboratory, pharmacy, billing/cashier workflows, revenue cycle, finance, administration, sync, and facility readiness features.
 
+## Project plan
+
+See [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for phase status and pending work, including the new **Phase 0 — Initial Configuration** first-run setup.
+
 ## Tech stack
 
 - **Web:** Next.js 15 (App Router), React 19, TypeScript

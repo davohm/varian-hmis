@@ -45,6 +45,7 @@ import {
   facilityRegulatoryProfiles,
   facilitySettings,
   facilitySyncTokens,
+  financeApprovalLimits,
   fiscalPeriods,
   integrationSettings,
   invoices,
@@ -216,6 +217,7 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(journalEntries).where(eq(journalEntries.facilityId, facilityId));
     await tx.delete(budgetLines).where(eq(budgetLines.facilityId, facilityId));
     await tx.delete(budgets).where(eq(budgets.facilityId, facilityId));
+    await tx.delete(financeApprovalLimits).where(eq(financeApprovalLimits.facilityId, facilityId));
     await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
     await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));
     await tx.delete(ledgerAccounts).where(eq(ledgerAccounts.facilityId, facilityId));
