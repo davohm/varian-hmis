@@ -8,6 +8,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
 import {
+  rotateFacilitySyncToken,
+  revokeFacilitySyncToken,
+} from "../src/server/commands/admin";
+import {
   dischargeEncounter,
   saveClinicalNote,
   startConsultation,
@@ -18,6 +22,7 @@ import { queuePatient } from "../src/server/commands/queue";
 import { recordTriageVitals } from "../src/server/commands/triage";
 import { createDatabase } from "../src/server/db/client";
 import {
+  account,
   auditLog,
   branches,
   clinicalNotes,
@@ -26,8 +31,11 @@ import {
   facilitySyncTokens,
   patients,
   queueEntries,
+  staffProfiles,
+  staffRoleScopes,
   syncOutbox,
   triageVitals,
+  user,
 } from "../src/server/db/schema";
 import { DATABASE_URL } from "../src/server/env";
 import { applySyncBatch, SyncBatchError } from "../src/server/sync/batch";
@@ -36,8 +44,20 @@ import {
   listFailedOutboxIds,
   listPendingRows,
   markRowsFailed,
+  pullCursorStateKey,
+  readSyncState,
   retryOutboxRows,
 } from "../src/server/sync/outbox";
+import { applyPullRows, readPullRows } from "../src/server/sync/pull";
+import {
+  SYNC_NO_HARD_DELETE_TABLES,
+  SYNC_OUTBOUND_TABLES,
+} from "../src/server/sync/registry";
+import { pullCursorsSchema } from "../src/server/sync/types";
+import {
+  SYNC_SCHEMA_HEADER,
+  SYNC_SCHEMA_VERSION,
+} from "../src/server/sync/version";
 import { runSyncCycle } from "../src/server/sync/worker";
 import type { SyncRow } from "../src/server/sync/types";
 
@@ -177,7 +197,9 @@ function outboxRow(
 beforeAll(async () => {
   await ensureClinicDatabase();
   cloud = createTestDatabase();
-  clinic = createDatabase(syncDatabaseUrl());
+  // The test process runs APP_MODE=cloud, but this database represents a
+  // branch server and must still capture local writes into its own outbox.
+  clinic = createDatabase(syncDatabaseUrl(), "clinic");
   await migrate(clinic.db, { migrationsFolder: resolve(process.cwd(), "drizzle") });
 });
 
@@ -271,6 +293,82 @@ describe("sync token authentication", () => {
       ).rejects.toMatchObject({ status: 403 });
     });
   });
+
+  it("rejects an expired token and stores only its hash", async () => {
+    await withPairedFacility(async ({ id }) => {
+      const expiresAt = new Date(Date.now() - 60_000).toISOString();
+      const result = await rotateFacilitySyncToken({
+        facilityId: id,
+        idempotencyKey: newIdempotencyKey(),
+        deviceKey: DEVICE,
+        tokenHash: hashSyncToken("expired-sync-token"),
+        expiresAt,
+        actor: { userId: "vitest" },
+      }, { database: cloud.db, mode: "cloud" });
+      expect(result.expiresAt).toBe(expiresAt);
+
+      await expect(
+        authorizeSyncToken(cloud.db, "Bearer expired-sync-token", DEVICE, id),
+      ).rejects.toMatchObject({ status: 401 });
+
+      const stored = await cloud.db
+        .select()
+        .from(facilitySyncTokens)
+        .where(eq(facilitySyncTokens.id, result.tokenId));
+      expect(stored[0]).toMatchObject({
+        tokenHash: hashSyncToken("expired-sync-token"),
+        active: true,
+      });
+      expect(stored[0].tokenHash).not.toContain("expired-sync-token");
+    });
+  });
+
+  it("rotates and revokes a token without accepting the old secret", async () => {
+    await withPairedFacility(async ({ id }) => {
+      const future = new Date(Date.now() + 60 * 60_000).toISOString();
+      const first = await rotateFacilitySyncToken({
+        facilityId: id,
+        idempotencyKey: newIdempotencyKey(),
+        deviceKey: DEVICE,
+        tokenHash: hashSyncToken(TOKEN),
+        expiresAt: future,
+        actor: { userId: "vitest" },
+      }, { database: cloud.db, mode: "cloud" });
+      expect(await authorizeSyncToken(cloud.db, `Bearer ${TOKEN}`, DEVICE, id)).toMatchObject({
+        tokenId: first.tokenId,
+        facilityId: id,
+      });
+
+      const second = await rotateFacilitySyncToken({
+        facilityId: id,
+        idempotencyKey: newIdempotencyKey(),
+        deviceKey: DEVICE,
+        tokenHash: hashSyncToken("rotated-sync-token"),
+        expiresAt: future,
+        actor: { userId: "vitest" },
+      }, { database: cloud.db, mode: "cloud" });
+      // Rotation replaces the secret on the same credential record, so audit
+      // history keeps pointing at one identity.
+      expect(second.tokenId).toBe(first.tokenId);
+      await expect(
+        authorizeSyncToken(cloud.db, `Bearer ${TOKEN}`, DEVICE, id),
+      ).rejects.toMatchObject({ status: 401 });
+      expect(await authorizeSyncToken(cloud.db, "Bearer rotated-sync-token", DEVICE, id)).toMatchObject({
+        tokenId: second.tokenId,
+        facilityId: id,
+      });
+
+      expect(await revokeFacilitySyncToken({
+        facilityId: id,
+        idempotencyKey: newIdempotencyKey(),
+        deviceKey: DEVICE,
+        actor: { userId: "vitest" },
+      }, { database: cloud.db, mode: "cloud" })).toEqual({ revoked: 1 });
+      await expect(
+        authorizeSyncToken(cloud.db, "Bearer rotated-sync-token", DEVICE, id),
+      ).rejects.toMatchObject({ status: 401 });
+    });
+  });
 });
 
 describe("cloud batch rules", () => {
@@ -314,14 +412,23 @@ describe("cloud batch rules", () => {
       rows = await cloud.db.select().from(patients).where(eq(patients.id, recordId));
       expect(rows).toHaveLength(1);
 
-      const current = outboxRow(id, "patients", {
+      const equalVersion = outboxRow(id, "patients", {
         ...stale.payload,
-        first_name: "Current",
+        first_name: "SameVersion",
         version: 5,
       }, { operation: "UPDATE", version: 5 });
+      await applyBatchOnCloud(id, [equalVersion]);
+      rows = await cloud.db.select().from(patients).where(eq(patients.id, recordId));
+      expect(rows[0]).toMatchObject({ firstName: "Newest", version: 5 });
+
+      const current = outboxRow(id, "patients", {
+        ...stale.payload,
+        first_name: "Newer",
+        version: 6,
+      }, { operation: "UPDATE", version: 6 });
       await applyBatchOnCloud(id, [current]);
       rows = await cloud.db.select().from(patients).where(eq(patients.id, recordId));
-      expect(rows[0]).toMatchObject({ firstName: "Current", version: 5 });
+      expect(rows[0]).toMatchObject({ firstName: "Newer", version: 6 });
     });
   });
 
@@ -527,6 +634,7 @@ describe("offline patient journey and reconnect", () => {
           expect(init?.headers).toMatchObject({
             authorization: `Bearer ${TOKEN}`,
             "x-device-key": DEVICE,
+            [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION),
           });
           const body = JSON.parse(String(init?.body)) as {
             facilityId: string;
@@ -540,9 +648,17 @@ describe("offline patient journey and reconnect", () => {
           });
         }
         if (url.includes("/api/sync/pull")) {
+          expect(init?.headers).toMatchObject({
+            authorization: `Bearer ${TOKEN}`,
+            "x-device-key": DEVICE,
+            [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION),
+          });
           return new Response(JSON.stringify({ rows: [], pulledAt: new Date().toISOString() }), {
             status: 200,
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION),
+            },
           });
         }
         throw new Error(`Unexpected worker request: ${url}`);
@@ -604,6 +720,263 @@ describe("offline patient journey and reconnect", () => {
       expect(await cloud.db.select().from(clinicalNotes).where(eq(clinicalNotes.id, note.noteId))).toHaveLength(1);
 
       expect(await facilityAuthority(clinic.db, id)).toBe("cloud");
+    });
+  });
+});
+
+describe("cloud pull keyset pagination", () => {
+  it("returns every row across pages, including ties on updated_at", async () => {
+    await withPairedFacility(async ({ id, branchId }) => {
+      const storeIds = Array.from({ length: 5 }, () => newId());
+      const stamp = "2026-06-01T10:00:00.000001Z";
+      for (const [index, storeId] of storeIds.entries()) {
+        await cloud.db.execute(sql`
+          INSERT INTO stores (id, facility_id, branch_id, name, kind, created_at, updated_at)
+          VALUES (
+            ${storeId}::uuid, ${id}::uuid, ${branchId}::uuid,
+            ${`Store ${index}`}, 'main',
+            ${stamp}::timestamptz, ${stamp}::timestamptz
+          )
+        `);
+      }
+
+      const first = await readPullRows(cloud.db, id, {}, 2);
+      const second = await readPullRows(cloud.db, id, first.cursors, 2);
+      const third = await readPullRows(cloud.db, id, second.cursors, 2);
+      const fourth = await readPullRows(cloud.db, id, third.cursors, 2);
+
+      const pulledIds = [first, second, third, fourth]
+        .flatMap((page) => page.rows)
+        .filter((row) => row.tableName === "stores")
+        .map((row) => String(row.payload.id));
+
+      expect(first.rows.filter((row) => row.tableName === "stores")).toHaveLength(2);
+      expect(second.rows.filter((row) => row.tableName === "stores")).toHaveLength(2);
+      expect(third.rows.filter((row) => row.tableName === "stores")).toHaveLength(1);
+      expect(fourth.rows.filter((row) => row.tableName === "stores")).toHaveLength(0);
+      expect(new Set(pulledIds).size).toBe(storeIds.length);
+      expect(pulledIds).toEqual(expect.arrayContaining(storeIds));
+
+      // The cursor keeps microsecond precision so the last row is not re-read.
+      expect(third.cursors.stores?.updatedAt).toBe(stamp);
+      expect(pullCursorsSchema.safeParse(third.cursors).success).toBe(true);
+    });
+  });
+
+  it("keeps pull checkpoints per facility", async () => {
+    await withPairedFacility(async ({ id: facilityA }) => {
+      await withPairedFacility(async ({ id: facilityB }) => {
+        const cursorA = { stores: { updatedAt: "2026-06-01T00:00:00.000000Z", id: newId() } };
+        const cursorB = { stores: { updatedAt: "2026-07-01T00:00:00.000000Z", id: newId() } };
+
+        await clinic.db.transaction(async (tx) => {
+          await applyPullRows(tx, [], facilityA, cursorA, "2026-06-01T00:00:01.000Z");
+        });
+        await clinic.db.transaction(async (tx) => {
+          await applyPullRows(tx, [], facilityB, cursorB, "2026-07-01T00:00:01.000Z");
+        });
+
+        const stateA = await readSyncState(clinic.db, pullCursorStateKey(facilityA));
+        const stateB = await readSyncState(clinic.db, pullCursorStateKey(facilityB));
+        expect(stateA?.tables).toEqual(cursorA);
+        expect(stateB?.tables).toEqual(cursorB);
+        expect(await readSyncState(clinic.db, pullCursorStateKey(newId()))).toBeNull();
+      });
+    });
+  });
+
+  it("scopes auth rows to the pulling facility and strips provider tokens", async () => {
+    await withPairedFacility(async ({ id: facilityA }) => {
+      await withPairedFacility(async ({ id: facilityB }) => {
+        const suffix = randomUUID().slice(0, 8);
+        const userIdA = `pull-a-${suffix}`;
+        const userIdB = `pull-b-${suffix}`;
+        const now = new Date();
+
+        for (const [userId, facilityId] of [[userIdA, facilityA], [userIdB, facilityB]] as const) {
+          await cloud.db.transaction(async (tx) => {
+            await tx.execute(sql`SET LOCAL varian.sync_apply = 'on'`);
+            await tx.insert(user).values({
+              id: userId,
+              name: `Pull User ${userId}`,
+              email: `${userId}@test.local`,
+              emailVerified: true,
+              createdAt: now,
+              updatedAt: now,
+            });
+            await tx.insert(staffProfiles).values({
+              id: newId(),
+              userId,
+              staffNumber: `PULL-${userId}`.toUpperCase().slice(0, 32),
+              createdAt: now,
+              updatedAt: now,
+            });
+            await tx.insert(staffRoleScopes).values({
+              id: newId(),
+              userId,
+              role: "admin",
+              facilityId,
+              createdAt: now,
+              updatedAt: now,
+            });
+            await tx.insert(account).values({
+              id: newId(),
+              accountId: userId,
+              providerId: "credential",
+              userId,
+              password: "hash-kept-for-offline-login",
+              accessToken: "secret-provider-token",
+              refreshToken: "secret-refresh-token",
+              idToken: "secret-id-token",
+              createdAt: now,
+              updatedAt: now,
+            });
+          });
+        }
+
+        const page = await readPullRows(cloud.db, facilityA, {}, 1000);
+        const pulledUsers = page.rows
+          .filter((row) => row.tableName === "user")
+          .map((row) => String(row.payload.id));
+        expect(pulledUsers).toContain(userIdA);
+        expect(pulledUsers).not.toContain(userIdB);
+
+        const pulledAccount = page.rows.find((row) => row.tableName === "account");
+        expect(pulledAccount).toBeDefined();
+        expect(pulledAccount?.payload).toMatchObject({
+          user_id: userIdA,
+          password: "hash-kept-for-offline-login",
+          access_token: null,
+          refresh_token: null,
+          id_token: null,
+        });
+      });
+    });
+  });
+});
+
+describe("sync hardening", () => {
+  it("does not capture direct cloud writes to cloud-authority facilities", async () => {
+    const cloudNode = createDatabase(DATABASE_URL, "cloud");
+    const id = newId();
+    const code = `CLOUD-${randomUUID().slice(0, 8).toUpperCase()}`;
+    try {
+      const roleResult = await cloudNode.db.execute(
+        sql`select current_setting('application_name') as application_name`,
+      );
+      expect(rowsFrom(roleResult)[0]?.application_name).toBe("varian-cloud");
+
+      await cloudNode.db.insert(facilities).values({
+        id,
+        code,
+        name: `Cloud Owned ${code}`,
+        writeAuthority: "cloud",
+        active: true,
+        createdBy: "vitest",
+      });
+      const recordId = newId();
+      await cloudNode.db.insert(patients).values({
+        id: recordId,
+        facilityId: id,
+        mrn: `${code}-DIRECT`,
+        firstName: "Direct",
+        lastName: "Cloud Write",
+        sex: "female",
+        createdBy: "vitest",
+      });
+      const captured = await cloudNode.db
+        .select()
+        .from(syncOutbox)
+        .where(eq(syncOutbox.facilityId, id));
+      expect(captured).toHaveLength(0);
+    } finally {
+      await cleanupTestFacility(cloudNode.db, id);
+      await cloudNode.pool.end();
+    }
+  });
+
+  it("keeps the TypeScript registry in sync with SQL sync_tables", async () => {
+    const result = await cloud.db.execute(sql`
+      SELECT table_name FROM sync_tables WHERE capture = true ORDER BY table_name
+    `);
+    const registered = rowsFrom(result).map((row) => String(row.table_name)).sort();
+    expect(registered).toEqual([...SYNC_OUTBOUND_TABLES].sort());
+  });
+
+  it("keeps the no-hard-delete registry in sync with SQL sync_tables", async () => {
+    const result = await cloud.db.execute(sql`
+      SELECT table_name FROM sync_tables WHERE no_hard_delete = true ORDER BY table_name
+    `);
+    const registered = rowsFrom(result).map((row) => String(row.table_name)).sort();
+    expect(registered).toEqual([...SYNC_NO_HARD_DELETE_TABLES].sort());
+  });
+
+  it("does not delete a missing versioned row", async () => {
+    const result = await cloud.db.execute(sql`
+      SELECT delete_sync_row('facilities', ${JSON.stringify({ id: newId(), version: 1 })}::jsonb, false) AS deleted
+    `);
+    expect(rowsFrom(result)[0]?.deleted).toBe(false);
+  });
+
+  it("refuses hard deletes of protected clinical records from commands and sync", async () => {
+    await withPairedFacility(async ({ id, branchId }) => {
+      const patientId = newId();
+      const encounterId = newId();
+      const noteId = newId();
+      await cloud.db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL varian.sync_apply = 'on'`);
+        await tx.insert(patients).values({
+          id: patientId,
+          facilityId: id,
+          mrn: `${id.slice(0, 6)}-NHD`,
+          firstName: "No",
+          lastName: "Delete",
+          sex: "female",
+          createdBy: "vitest",
+        });
+        await tx.insert(encounters).values({
+          id: encounterId,
+          facilityId: id,
+          branchId,
+          patientId,
+          encounterNo: `${id.slice(0, 6)}-NHD-1`,
+          createdBy: "vitest",
+        });
+        await tx.insert(clinicalNotes).values({
+          id: noteId,
+          facilityId: id,
+          encounterId,
+          assessment: "Protected note",
+          authorId: "vitest",
+          createdBy: "vitest",
+        });
+      });
+
+      const client = await cloud.pool.connect();
+      try {
+        await expect(client.query("DELETE FROM clinical_notes WHERE id = $1", [noteId]))
+          .rejects.toThrow(/cannot be hard-deleted/);
+        await expect(client.query(
+          "SELECT delete_sync_row('clinical_notes', $1::jsonb, true) AS deleted",
+          [JSON.stringify({ id: noteId, version: 1 })],
+        )).rejects.toThrow(/cannot be hard-deleted/);
+      } finally {
+        client.release();
+      }
+
+      const deleteRow = outboxRow(id, "clinical_notes", {
+        id: noteId,
+        facility_id: id,
+        version: 1,
+      }, { operation: "DELETE" });
+      await expect(applyBatchOnCloud(id, [deleteRow])).rejects.toBeInstanceOf(SyncBatchError);
+
+      const notes = await cloud.db
+        .select()
+        .from(clinicalNotes)
+        .where(eq(clinicalNotes.id, noteId));
+      expect(notes).toHaveLength(1);
+      expect(notes[0].assessment).toBe("Protected note");
     });
   });
 });

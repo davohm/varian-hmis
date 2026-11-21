@@ -14,6 +14,9 @@ import {
   createStaff,
   createStore,
   importIcd10,
+  applyAdminOverride,
+  proposeAdminOverride,
+  rejectAdminOverride,
   setAdminSectionAccess,
   removePrice,
   setBranchActive,
@@ -47,6 +50,9 @@ import {
   type CreateRoomInput,
   type CreateServiceInput,
   type CreateStaffInput,
+  type ApplyAdminOverrideInput,
+  type ProposeAdminOverrideInput,
+  type RejectAdminOverrideInput,
   type ImportIcd10Input,
   type RemovePriceInput,
   type SetBranchActiveInput,
@@ -75,6 +81,9 @@ import { handleAdminCommand } from "../_shared";
 type RawInput = Record<string, unknown>;
 
 const commands: Record<string, (input: RawInput) => Promise<unknown>> = {
+  applyAdminOverride: (input) => applyAdminOverride(input as ApplyAdminOverrideInput),
+  proposeAdminOverride: (input) => proposeAdminOverride(input as ProposeAdminOverrideInput),
+  rejectAdminOverride: (input) => rejectAdminOverride(input as RejectAdminOverrideInput),
   createFacility: (input) => createFacility(input as CreateFacilityInput),
   updateFacility: (input) => updateFacility(input as UpdateFacilityInput),
   setFacilityActive: (input) => setFacilityActive(input as SetFacilityActiveInput),

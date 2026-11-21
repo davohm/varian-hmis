@@ -9,6 +9,25 @@ function rowsFrom(result: unknown): Array<Record<string, unknown>> {
   return (result as { rows?: Array<Record<string, unknown>> }).rows ?? [];
 }
 
+/** Pull checkpoints are per facility so one branch cannot advance another's cursor. */
+export function pullCursorStateKey(facilityId: string): string {
+  return `last_pull_cursors:${facilityId}`;
+}
+
+export function pullStatusStateKey(facilityId: string): string {
+  return `last_pulled_at:${facilityId}`;
+}
+
+export async function readPullCursors(
+  executor: DbExecutor,
+  facilityId: string,
+): Promise<Record<string, { updatedAt: string; id: string | null }>> {
+  const state = await readSyncState(executor, pullCursorStateKey(facilityId));
+  const tables = state?.tables;
+  if (!tables || typeof tables !== "object") return {};
+  return tables as Record<string, { updatedAt: string; id: string | null }>;
+}
+
 function facilityCondition(facilityId?: string): SQL {
   return facilityId
     ? sql`AND facility_id = ${facilityId}::uuid`
@@ -148,10 +167,13 @@ export async function getSyncStatus(
       (SELECT count(*)::int FROM sync_outbox WHERE status = 'failed' ${facilityCondition(facilityId)}) AS "failedCount",
       (SELECT max(synced_at) FROM sync_outbox WHERE status = 'synced' ${facilityCondition(facilityId)}) AS "lastSuccessAt",
       (SELECT max(last_error) FROM sync_outbox WHERE status = 'failed' ${facilityCondition(facilityId)}) AS "lastError",
-      (SELECT updated_at FROM sync_state WHERE key = 'last_pulled_at') AS "lastPulledAt"
+      (SELECT updated_at FROM sync_state WHERE key = ${facilityId ? pullStatusStateKey(facilityId) : 'last_pulled_at'}) AS "lastPulledAt"
   `);
   const row = rowsFrom(result)[0] ?? {};
-  const lastPulled = await readSyncState(executor, "last_pulled_at");
+  const lastPulled = await readSyncState(
+    executor,
+    facilityId ? pullStatusStateKey(facilityId) : "last_pulled_at",
+  );
 
   return {
     appMode: APP_MODE,

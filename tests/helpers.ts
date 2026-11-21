@@ -7,6 +7,7 @@ import { DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
 import {
   account,
+  adminOverrides,
   adminSectionPermissions,
   auditLog,
   bankAccounts,
@@ -99,7 +100,10 @@ import {
 import { seedRegulatoryDefaults } from "../src/server/regulatory-seed";
 
 export function createTestDatabase() {
-  return createDatabase(DATABASE_URL);
+  // Tests exercise local command writes, including their outbox rows. Only
+  // tests that explicitly need cloud-node behaviour should open a cloud-role
+  // connection.
+  return createDatabase(DATABASE_URL, "clinic");
 }
 
 export type TestDatabase = ReturnType<typeof createTestDatabase>;
@@ -259,6 +263,7 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(patients).where(eq(patients.facilityId, facilityId));
     await tx.delete(auditLog).where(eq(auditLog.facilityId, facilityId));
     await tx.delete(commandLog).where(eq(commandLog.facilityId, facilityId));
+    await tx.delete(adminOverrides).where(eq(adminOverrides.facilityId, facilityId));
     await tx.delete(numberSequences).where(eq(numberSequences.facilityId, facilityId));
     await tx.delete(stores).where(eq(stores.facilityId, facilityId));
     await tx.delete(rooms).where(eq(rooms.facilityId, facilityId));
@@ -266,6 +271,14 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(branches).where(eq(branches.facilityId, facilityId));
     await tx.delete(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
     await tx.delete(syncReceived).where(eq(syncReceived.facilityId, facilityId));
+    await tx.execute(sql`
+      DELETE FROM sync_state
+      WHERE key IN (
+        ${`last_pull_cursors:${facilityId}`},
+        ${`last_pulled_at:${facilityId}`},
+        ${`last_override_cursor:${facilityId}`}
+      )
+    `);
     await tx.delete(facilitySyncTokens).where(eq(facilitySyncTokens.facilityId, facilityId));
     await tx.delete(dataBreaches).where(eq(dataBreaches.facilityId, facilityId));
     await tx.delete(retentionPolicies).where(eq(retentionPolicies.facilityId, facilityId));

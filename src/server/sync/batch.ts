@@ -2,7 +2,11 @@ import { sql } from "drizzle-orm";
 
 import type { DbExecutor } from "@/server/numbering";
 
-import { facilityColumnForTable, isAppendOnlySyncTable } from "./registry";
+import {
+  facilityColumnForTable,
+  isAppendOnlySyncTable,
+  isNoHardDeleteSyncTable,
+} from "./registry";
 import type { SyncRow } from "./types";
 
 export class SyncBatchError extends Error {
@@ -82,6 +86,11 @@ export async function applySyncBatch(
 
     if (isAppendOnlySyncTable(row.tableName) && row.operation !== "INSERT") {
       throw new SyncBatchError(`${row.tableName} is append-only; ${row.operation} was rejected`);
+    }
+    if (row.operation === "DELETE" && isNoHardDeleteSyncTable(row.tableName)) {
+      throw new SyncBatchError(
+        `${row.tableName} cannot be hard-deleted; use a reversal, status change or new version`,
+      );
     }
 
     const payload = JSON.stringify(row.payload);

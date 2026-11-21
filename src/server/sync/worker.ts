@@ -15,10 +15,12 @@ import {
   listPendingRows,
   markRowsFailed,
   markRowsSynced,
+  readPullCursors,
   readSyncState,
 } from "./outbox";
-import { applyPullRows } from "./pull";
+import { applyPullRows, overrideCursorStateKey } from "./pull";
 import { pullResponseSchema, type SyncRow } from "./types";
+import { checkAdvertisedSyncSchemaVersion, SYNC_SCHEMA_HEADER, SYNC_SCHEMA_VERSION } from "./version";
 
 type Database = typeof defaultDb;
 
@@ -53,7 +55,9 @@ function resolveConfig(overrides: Partial<SyncWorkerConfig> = {}): SyncWorkerCon
     token,
     deviceKey: overrides.deviceKey ?? FACILITY_DEVICE_KEY,
     cloudUrl: cloudUrl.replace(/\/+$/, ""),
-    batchSize: overrides.batchSize ?? SYNC_BATCH_SIZE,
+    // The batch endpoint caps rows at 100; a misconfigured worker must not
+    // burn retry attempts on requests that can never be accepted.
+    batchSize: Math.min(overrides.batchSize ?? SYNC_BATCH_SIZE, 100),
     timeoutMs: overrides.timeoutMs ?? SYNC_TIMEOUT_MS,
     fetchImpl: overrides.fetchImpl ?? fetch,
   };
@@ -108,6 +112,7 @@ async function pushPending(config: SyncWorkerConfig): Promise<{ pushed: number; 
           "content-type": "application/json",
           authorization: `Bearer ${config.token}`,
           "x-device-key": config.deviceKey,
+          [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION),
         },
         body: JSON.stringify({
           facilityId: config.facilityId,
@@ -137,10 +142,28 @@ async function pushPending(config: SyncWorkerConfig): Promise<{ pushed: number; 
 
 async function pullCatalogs(config: SyncWorkerConfig): Promise<{ pulled: number; error: string | null }> {
   try {
-    const state = await readSyncState(config.database, "last_pulled_at");
-    const since = typeof state?.timestamp === "string" ? state.timestamp : new Date(0).toISOString();
+    const cursors = await readPullCursors(config.database, config.facilityId);
+    const overrideCursorState = await readSyncState(
+      config.database,
+      overrideCursorStateKey(config.facilityId),
+    );
+    // Legacy checkpoint is only used for the "since" fallback and for clouds
+    // that predate cursor support.
+    const legacy = await readSyncState(config.database, "last_pulled_at");
+    const since = typeof legacy?.timestamp === "string"
+      ? legacy.timestamp
+      : new Date(0).toISOString();
     const url = new URL(`${config.cloudUrl}/api/sync/pull`);
     url.searchParams.set("since", since);
+    if (Object.keys(cursors).length > 0) {
+      url.searchParams.set("cursors", JSON.stringify(cursors));
+    }
+    if (overrideCursorState?.createdAt && overrideCursorState?.id) {
+      url.searchParams.set("overridesCursor", JSON.stringify({
+        createdAt: overrideCursorState.createdAt,
+        id: overrideCursorState.id,
+      }));
+    }
 
     const response = await fetchWithTimeout(
       config.fetchImpl,
@@ -150,6 +173,7 @@ async function pullCatalogs(config: SyncWorkerConfig): Promise<{ pulled: number;
         headers: {
           authorization: `Bearer ${config.token}`,
           "x-device-key": config.deviceKey,
+          [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION),
         },
       },
       config.timeoutMs,
@@ -158,10 +182,19 @@ async function pullCatalogs(config: SyncWorkerConfig): Promise<{ pulled: number;
       const detail = (await response.text().catch(() => "")).slice(0, 500);
       throw new Error(`Pull rejected (${response.status}): ${detail}`);
     }
+    checkAdvertisedSyncSchemaVersion(response.headers.get(SYNC_SCHEMA_HEADER));
 
     const parsed = pullResponseSchema.parse(await response.json());
     await (config.database as Database).transaction(async (tx: DbExecutor) => {
-      await applyPullRows(tx, parsed.rows, parsed.pulledAt);
+      await applyPullRows(
+        tx,
+        parsed.rows,
+        config.facilityId,
+        parsed.cursors,
+        parsed.pulledAt,
+        parsed.overrides,
+        parsed.overrideCursor,
+      );
     });
     return { pulled: parsed.rows.length, error: null };
   } catch (error) {

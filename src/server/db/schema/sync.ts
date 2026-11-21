@@ -87,6 +87,7 @@ export const facilitySyncTokens = pgTable(
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => ({
@@ -97,6 +98,49 @@ export const facilitySyncTokens = pgTable(
   }),
 );
 
+export const adminOverrideStatusEnum = pgEnum("admin_override_status", [
+  "proposed",
+  "applied",
+  "rejected",
+  "conflicted",
+]);
+
+/**
+ * A cloud-originated change proposal for a branch-owned record. It travels
+ * through the normal pull channel, but is only applied at the branch after a
+ * local admin runs `applyAdminOverride` against the exact base version.
+ */
+export const adminOverrides = pgTable(
+  "admin_overrides",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    tableName: text("table_name").notNull(),
+    recordId: text("record_id").notNull(),
+    changes: jsonb("changes").$type<Record<string, unknown>>().notNull(),
+    basedOnVersion: integer("based_on_version").notNull(),
+    reason: text("reason").notNull(),
+    requestedBy: text("requested_by").notNull(),
+    status: adminOverrideStatusEnum("status").notNull().default("proposed"),
+    decisionBy: text("decision_by"),
+    decisionReason: text("decision_reason"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => ({
+    facilityIdx: index("admin_overrides_facility_idx").on(
+      table.facilityId,
+      table.status,
+      table.createdAt,
+    ),
+  }),
+);
+
+export type AdminOverrideRow = typeof adminOverrides.$inferSelect;
 export type SyncOutboxRow = typeof syncOutbox.$inferSelect;
 export type NewSyncOutboxRow = typeof syncOutbox.$inferInsert;
 export type SyncReceivedRow = typeof syncReceived.$inferSelect;

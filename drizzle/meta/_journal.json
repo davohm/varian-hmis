@@ -127,6 +127,55 @@
       "when": 1795247925443,
       "tag": "0017_superb_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795248787208,
+      "tag": "0018_sync_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795249455627,
+      "tag": "0019_sync_business_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795249756922,
+      "tag": "0020_admin_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795250883055,
+      "tag": "0021_sync_token_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795251355213,
+      "tag": "0022_no_hard_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795251750461,
+      "tag": "0023_no_hard_delete_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795252000000,
+      "tag": "0024_node_role_application_name",
+      "breakpoints": true
     }
   ]
 }

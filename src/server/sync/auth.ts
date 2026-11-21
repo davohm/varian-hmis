@@ -56,6 +56,7 @@ export async function authorizeSyncToken(
       t.facility_id::text AS "facilityId",
       t.device_key AS "deviceKey",
       t.token_hash AS "tokenHash",
+      t.expires_at AS "expiresAt",
       f.write_authority AS "writeAuthority",
       f.active AS "facilityActive"
     FROM facility_sync_tokens t
@@ -63,6 +64,7 @@ export async function authorizeSyncToken(
     WHERE t.device_key = ${deviceKey}
       AND t.active = true
       AND t.revoked_at IS NULL
+      AND (t.expires_at IS NULL OR t.expires_at > now())
   `);
 
   const candidates = ((result as { rows?: Array<Record<string, unknown>> }).rows ?? [])

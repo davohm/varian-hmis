@@ -62,6 +62,11 @@ export const ADMIN_SECTION_META: Record<AdminSection, AdminSectionMeta> = {
 
 /** Every mutation command belongs to exactly one administration section. */
 export const ADMIN_COMMAND_SECTIONS: Record<string, AdminSection> = {
+  proposeAdminOverride: "sync",
+  applyAdminOverride: "sync",
+  rejectAdminOverride: "sync",
+  rotateFacilitySyncToken: "sync",
+  revokeFacilitySyncToken: "sync",
   createFacility: "setup",
   updateFacility: "setup",
   setFacilityActive: "setup",

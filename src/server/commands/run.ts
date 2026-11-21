@@ -2,11 +2,9 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { findCommand } from "@/server/audit";
-import { db } from "@/server/db/client";
-import { APP_MODE } from "@/server/env";
+import { type AppDatabase, db } from "@/server/db/client";
+import { APP_MODE, type AppMode } from "@/server/env";
 import type { DbExecutor } from "@/server/numbering";
-
-type AppDatabase = typeof db;
 export type CommandTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
 export interface CommandActor {
@@ -28,6 +26,10 @@ export interface CommandRequest {
 
 export interface CommandOptions {
   database?: AppDatabase;
+  /** Effective node mode; defaults to APP_MODE. Used to simulate a branch in tests. */
+  mode?: AppMode;
+  /** Opt-in for commands that write a proposal, not branch-owned data. */
+  allowCrossAuthority?: boolean;
 }
 
 export class CommandConflictError extends Error {
@@ -58,13 +60,15 @@ export async function runCommand<T>(
       LIMIT 1
     `);
     const storedAuthority = ((authority as { rows?: Array<{ writeAuthority?: string }> }).rows ?? [])[0]?.writeAuthority;
+    const mode = options.mode ?? APP_MODE;
     if (
+      !options.allowCrossAuthority &&
       storedAuthority &&
-      ((APP_MODE === "cloud" && storedAuthority !== "cloud") ||
-        (APP_MODE === "clinic" && storedAuthority !== "clinic"))
+      ((mode === "cloud" && storedAuthority !== "cloud") ||
+        (mode === "clinic" && storedAuthority !== "clinic"))
     ) {
       throw new Error(
-        `Facility is owned by ${storedAuthority}; writes from ${APP_MODE} mode are not allowed`,
+        `Facility is owned by ${storedAuthority}; writes from ${mode} mode are not allowed`,
       );
     }
 

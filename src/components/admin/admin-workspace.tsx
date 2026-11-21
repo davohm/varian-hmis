@@ -167,8 +167,42 @@ interface FailedSyncRow {
 }
 
 interface SyncMonitor {
+  facilityId: string;
   status: SyncStatus;
   failedRows: FailedSyncRow[];
+  overrides: AdminOverrideRow[];
+  targets: OverrideTarget[];
+  overrideFields: Record<string, string[]>;
+}
+
+interface OverrideTarget {
+  table: string;
+  recordId: string;
+  label: string;
+  version: number;
+}
+
+interface AdminOverrideRow extends Row {
+  id: string;
+  tableName: string;
+  recordId: string;
+  changes: Record<string, unknown>;
+  basedOnVersion: number;
+  reason: string;
+  requestedBy: string;
+  status: "proposed" | "applied" | "rejected" | "conflicted";
+  decisionBy: string | null;
+  decisionReason: string | null;
+  createdAt: string;
+  version: number;
+}
+
+interface OverrideApplyResult {
+  status: "applied" | "conflicted" | "invalid";
+  version?: number;
+  expectedVersion?: number;
+  actualVersion?: number;
+  reason?: string;
 }
 
 export type FieldValue = string | boolean;
@@ -1177,15 +1211,44 @@ function AuditPanel() {
   );
 }
 
+function humanizeField(name: string) {
+  return name
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function OverrideStatusBadge({ status }: { status: AdminOverrideRow["status"] }) {
+  const classes: Record<AdminOverrideRow["status"], string> = {
+    proposed: "bg-[var(--status-info-background)] text-[var(--status-info-foreground)]",
+    applied: "bg-[var(--status-normal-background)] text-[var(--status-normal-foreground)]",
+    rejected: "bg-[var(--status-critical-background)] text-[var(--status-critical-foreground)]",
+    conflicted: "bg-[var(--status-warning-background)] text-[var(--status-warning-foreground)]",
+  };
+  return (
+    <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", classes[status])}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
+  );
+}
+
 function SyncPanel() {
   const [monitor, setMonitor] = useState<SyncMonitor | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [proposalTable, setProposalTable] = useState("patients");
+  const [recordId, setRecordId] = useState("");
+  const [reason, setReason] = useState("");
+  const [changes, setChanges] = useState<Record<string, string | boolean>>({});
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [tokenDeviceKey, setTokenDeviceKey] = useState("");
+  const [issuedToken, setIssuedToken] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (table?: string) => {
     setLoading(true);
     try {
-      setMonitor(await requestJson<SyncMonitor>("/api/admin/sync"));
+      const query = table ? `?table=${encodeURIComponent(table)}` : "";
+      setMonitor(await requestJson<SyncMonitor>(`/api/admin/sync${query}`));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load sync status");
     } finally {
@@ -1193,7 +1256,7 @@ function SyncPanel() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(proposalTable); }, [load, proposalTable]);
 
   const retry = useCallback(async (outboxIds: string[], label: string) => {
     setBusyId(label);
@@ -1208,19 +1271,136 @@ function SyncPanel() {
         ),
       });
       toast.success(`${result.retried} row(s) queued for retry.`);
-      await load();
+      await load(proposalTable);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not retry rows");
     } finally {
       setBusyId(null);
     }
-  }, [load]);
+  }, [load, proposalTable]);
+
+  const chooseTable = useCallback((table: string) => {
+    setProposalTable(table);
+    setRecordId("");
+    setChanges({});
+  }, []);
+
+  const selectedTarget = monitor?.targets.find((target) => target.recordId === recordId);
+  const fieldNames = monitor?.overrideFields?.[proposalTable] ?? [];
+
+  const propose = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!monitor?.facilityId) return;
+    if (!selectedTarget) {
+      toast.error("Choose the branch record this proposal is based on");
+      return;
+    }
+    if (reason.trim().length < 5) {
+      toast.error("Give a reason of at least 5 characters");
+      return;
+    }
+    const payloadChanges = Object.fromEntries(
+      Object.entries(changes).filter(([, value]) => value !== ""),
+    );
+    if (Object.keys(payloadChanges).length === 0) {
+      toast.error("Change at least one allowed field");
+      return;
+    }
+    setBusyId("propose");
+    try {
+      await postCommand("proposeAdminOverride", {
+        facilityId: monitor.facilityId,
+        tableName: proposalTable,
+        recordId: selectedTarget.recordId,
+        basedOnVersion: selectedTarget.version,
+        changes: payloadChanges,
+        reason: reason.trim(),
+      });
+      toast.success("Override proposed. The branch will see it on its next pull.");
+      setReason("");
+      setChanges({});
+      await load(proposalTable);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not propose the override");
+    } finally {
+      setBusyId(null);
+    }
+  }, [changes, load, monitor?.facilityId, proposalTable, reason, selectedTarget]);
+
+  const decide = useCallback(async (row: AdminOverrideRow, action: "apply" | "reject") => {
+    if (!monitor?.facilityId) return;
+    const decisionReason = rejectReasons[row.id]?.trim() ?? "";
+    if (action === "reject" && decisionReason.length < 3) {
+      toast.error("Give a rejection reason of at least 3 characters");
+      return;
+    }
+    setBusyId(`${action}-${row.id}`);
+    try {
+      if (action === "apply") {
+        const result = await postCommand<OverrideApplyResult>("applyAdminOverride", {
+          facilityId: monitor.facilityId,
+          overrideId: row.id,
+        });
+        if (result.status === "applied") {
+          toast.success("Override applied to the branch record.");
+        } else if (result.status === "conflicted") {
+          toast.error(
+            `Record changed at the branch. Expected version ${result.expectedVersion}, found ${result.actualVersion}.`,
+          );
+        } else {
+          toast.error(result.reason ?? "Override cannot be applied");
+        }
+      } else {
+        await postCommand("rejectAdminOverride", {
+          facilityId: monitor.facilityId,
+          overrideId: row.id,
+          decisionReason,
+        });
+        toast.success("Override rejected.");
+      }
+      await load(proposalTable);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not record the decision");
+    } finally {
+      setBusyId(null);
+    }
+  }, [load, monitor?.facilityId, proposalTable, rejectReasons]);
+
+  const manageToken = useCallback(async (action: "rotate-token" | "revoke-token") => {
+    if (tokenDeviceKey.trim().length === 0) {
+      toast.error("Enter the branch device key first");
+      return;
+    }
+    setBusyId(action);
+    try {
+      const result = await requestJson<{ token?: string; revoked?: number; expiresAt?: string }>(
+        "/api/admin/sync",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action, deviceKey: tokenDeviceKey.trim() }),
+        },
+      );
+      if (action === "rotate-token" && result.token) {
+        setIssuedToken(result.token);
+        toast.success(`Token rotated${result.expiresAt ? `; expires ${new Date(result.expiresAt).toLocaleDateString("en-KE")}` : ""}.`);
+      } else {
+        setIssuedToken("");
+        toast.success(`${result.revoked ?? 0} token(s) revoked.`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update the sync token");
+    } finally {
+      setBusyId(null);
+    }
+  }, [tokenDeviceKey]);
 
   const status = monitor?.status;
   const oldestHours = status?.oldestPendingSeconds == null
     ? null
     : Math.floor(status.oldestPendingSeconds / 3600);
   const stale = oldestHours !== null && oldestHours >= 24;
+  const canDecide = status?.appMode === "clinic";
 
   const metric = (label: string, value: string, testId: string) => (
     <div className="rounded-lg border border-border bg-muted/30 p-3" data-testid={testId}>
@@ -1229,12 +1409,82 @@ function SyncPanel() {
     </div>
   );
 
-  const columns: Array<{ key: string; label: string; render: (row: FailedSyncRow) => ReactNode }> = [
+  const columns: Array<{ key: string; label: string; render: (row: AdminOverrideRow) => ReactNode }> = [
+    { key: "when", label: "When", render: (row) => <span className="font-mono text-xs">{new Date(row.createdAt).toLocaleString("en-KE")}</span> },
+    {
+      key: "target",
+      label: "Target",
+      render: (row) => (
+        <>
+          <span className="font-medium">{row.tableName}</span>
+          <br />
+          <code className="text-[11px]">{row.recordId}</code>
+        </>
+      ),
+    },
+    { key: "changes", label: "Changes", render: (row) => <code className="block max-w-xs truncate text-[11px]">{JSON.stringify(row.changes)}</code> },
+    { key: "base", label: "Base", render: (row) => <span className="font-mono text-xs tabular-nums">v{row.basedOnVersion}</span> },
+    { key: "reason", label: "Reason", render: (row) => <span className="text-xs">{row.reason}</span> },
+    {
+      key: "status",
+      label: "Status",
+      render: (row) => (
+        <>
+          <OverrideStatusBadge status={row.status} />
+          {row.decisionReason ? <p className="mt-1 text-[11px] text-muted-foreground">{row.decisionReason}</p> : null}
+        </>
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      render: (row) => (
+        row.status !== "proposed" ? <span className="text-xs text-muted-foreground">Decided</span> : (
+          <div className="flex flex-col gap-2">
+            {canDecide ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busyId !== null}
+                  data-testid={`admin-override-apply-${row.id}`}
+                  onClick={() => void decide(row, "apply")}
+                >
+                  {busyId === `apply-${row.id}` ? "Applying..." : "Apply"}
+                </Button>
+                <Input
+                  aria-label={`Rejection reason for ${row.recordId}`}
+                  className="h-7 w-full text-xs"
+                  value={rejectReasons[row.id] ?? ""}
+                  onChange={(event) => setRejectReasons((current) => ({ ...current, [row.id]: event.target.value }))}
+                  placeholder="Rejection reason"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busyId !== null}
+                  data-testid={`admin-override-reject-${row.id}`}
+                  onClick={() => void decide(row, "reject")}
+                >
+                  {busyId === `reject-${row.id}` ? "Rejecting..." : "Reject"}
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">Decisions run on the branch</span>
+            )}
+          </div>
+        )
+      ),
+    },
+  ];
+
+  const failedColumns: Array<{ key: string; label: string; render: (row: FailedSyncRow) => ReactNode }> = [
     { key: "when", label: "When", render: (row) => <span className="font-mono text-xs">{new Date(row.createdAt).toLocaleString("en-KE")}</span> },
     { key: "record", label: "Record", render: (row) => <><span className="font-medium">{row.tableName}</span><br /><code className="text-[11px]">{row.recordId}</code></> },
     { key: "operation", label: "Operation", render: (row) => row.operation },
     { key: "attempts", label: "Attempts", render: (row) => <span className="tabular-nums">{row.attempts}</span> },
-    { key: "error", label: "Last error", render: (row) => <span className="text-xs text-[var(--status-critical)]">{row.lastError ?? "â€”"}</span> },
+    { key: "error", label: "Last error", render: (row) => <span className="text-xs text-[var(--status-critical)]">{row.lastError ?? "-"}</span> },
     { key: "payload", label: "Payload", render: (row) => <code className="block max-w-xs truncate text-[11px]">{row.payloadPreview}</code> },
     {
       key: "actions",
@@ -1248,7 +1498,7 @@ function SyncPanel() {
           data-testid={`admin-sync-retry-${row.outboxId}`}
           onClick={() => void retry([row.outboxId], row.outboxId)}
         >
-          {busyId === row.outboxId ? "Retryingâ€¦" : "Retry"}
+          {busyId === row.outboxId ? "Retrying..." : "Retry"}
         </Button>
       ),
     },
@@ -1271,11 +1521,23 @@ function SyncPanel() {
         description="Outbox state for the active facility. Clinic mode syncs to the configured cloud."
         testId="admin-sync-status-panel"
       >
+        <div className="mb-3 flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            data-testid="admin-sync-refresh"
+            onClick={() => void load(proposalTable)}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </Button>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {metric("Mode", status?.appMode ?? "â€”", "admin-sync-mode-metric")}
+          {metric("Mode", status?.appMode ?? "-", "admin-sync-mode-metric")}
           {metric("Pending", String(status?.pendingCount ?? 0), "admin-sync-pending-metric")}
           {metric("Failed", String(status?.failedCount ?? 0), "admin-sync-failed-metric")}
-          {metric("Oldest pending", oldestHours === null ? "â€”" : `${oldestHours}h`, "admin-sync-oldest-metric")}
+          {metric("Oldest pending", oldestHours === null ? "-" : `${oldestHours}h`, "admin-sync-oldest-metric")}
         </div>
         <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-3">
           <p data-testid="admin-sync-last-success">
@@ -1288,6 +1550,196 @@ function SyncPanel() {
             Last error: <span className="font-mono text-foreground">{status?.lastError ?? "none"}</span>
           </p>
         </div>
+      </Panel>
+
+      <Panel
+        title="Override proposals"
+        description="Central admins may propose demographic and setup changes. The branch decides using its own record version."
+        testId="admin-sync-overrides-panel"
+      >
+        <form onSubmit={(event) => void propose(event)} className="space-y-4" data-testid="admin-override-propose-form">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="override-table">Record type</Label>
+              <select
+                id="override-table"
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:bg-input/30"
+                value={proposalTable}
+                onChange={(event) => chooseTable(event.target.value)}
+                disabled={busyId !== null || status?.appMode !== "cloud"}
+                data-testid="admin-override-table-select"
+              >
+                {Object.keys(monitor?.overrideFields ?? {}).map((table) => (
+                  <option key={table} value={table}>{humanizeField(table)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="override-target">Branch record</Label>
+              <select
+                id="override-target"
+                className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:bg-input/30"
+                value={recordId}
+                onChange={(event) => setRecordId(event.target.value)}
+                disabled={busyId !== null || status?.appMode !== "cloud"}
+                data-testid="admin-override-target-select"
+              >
+                <option value="">Select a record</option>
+                {(monitor?.targets ?? []).map((target) => (
+                  <option key={target.recordId} value={target.recordId}>
+                    {target.label} (v{target.version})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {selectedTarget ? (
+            <p className="text-xs text-muted-foreground" data-testid="admin-override-base-version">
+              Proposal will be based on version <span className="font-mono text-foreground">{selectedTarget.version}</span>.
+            </p>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fieldNames.map((field) => (
+              <div key={field} className="space-y-1">
+                <Label htmlFor={`override-field-${field}`}>{humanizeField(field)}</Label>
+                {field === "sex" ? (
+                  <select
+                    id={`override-field-${field}`}
+                    className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:bg-input/30"
+                    value={String(changes[field] ?? "")}
+                    onChange={(event) => setChanges((current) => ({ ...current, [field]: event.target.value }))}
+                    disabled={busyId !== null || status?.appMode !== "cloud"}
+                    data-testid={`admin-override-field-${field}`}
+                  >
+                    <option value="">No change</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="intersex">Intersex</option>
+                    <option value="unknown">Unknown</option>
+                  </select>
+                ) : field === "dob_estimated" ? (
+                  <label className="flex h-8 items-center gap-2 text-sm">
+                    <input
+                      id={`override-field-${field}`}
+                      type="checkbox"
+                      className="size-4 accent-[var(--primary)]"
+                      checked={Boolean(changes[field])}
+                      onChange={(event) => setChanges((current) => ({ ...current, [field]: event.target.checked }))}
+                      disabled={busyId !== null || status?.appMode !== "cloud"}
+                      data-testid={`admin-override-field-${field}`}
+                    />
+                    <span className="text-muted-foreground">Date of birth is estimated</span>
+                  </label>
+                ) : (
+                  <Input
+                    id={`override-field-${field}`}
+                    type={field === "dob" ? "date" : "text"}
+                    value={String(changes[field] ?? "")}
+                    onChange={(event) => setChanges((current) => ({ ...current, [field]: event.target.value }))}
+                    disabled={busyId !== null || status?.appMode !== "cloud"}
+                    data-testid={`admin-override-field-${field}`}
+                    placeholder="Leave blank to keep the current value"
+                  />
+                )}
+              </div>
+            ))}
+            <div className="space-y-1 sm:col-span-2">
+              <Label htmlFor="override-reason">Reason</Label>
+              <textarea
+                id="override-reason"
+                className="min-h-20 w-full rounded-lg border border-input bg-transparent p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:bg-input/30"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                disabled={busyId !== null || status?.appMode !== "cloud"}
+                data-testid="admin-override-reason"
+                placeholder="Why this change is needed"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={busyId !== null || status?.appMode !== "cloud"}
+              data-testid="admin-override-propose"
+            >
+              {busyId === "propose" ? "Proposing..." : "Propose override"}
+            </Button>
+          </div>
+        </form>
+        {status?.appMode !== "cloud" ? (
+          <p className="mt-3 text-xs text-muted-foreground">Proposals are created from the cloud admin console.</p>
+        ) : null}
+      </Panel>
+
+      <Panel
+        title="Override queue"
+        description="Proposals delivered by pull, with branch decisions and version conflicts."
+        testId="admin-override-queue-panel"
+      >
+        <DataTable
+          rows={monitor?.overrides ?? []}
+          columns={columns}
+          testId="admin-override-rows"
+          empty={loading ? "Loading overrides..." : "No overrides yet."}
+        />
+      </Panel>
+
+      <Panel
+        title="Sync token"
+        description="Rotate a branch token after a device change or suspected exposure. Revoked tokens stop working immediately."
+        testId="admin-sync-token-panel"
+      >
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="space-y-1">
+            <Label htmlFor="sync-token-device">Branch device key</Label>
+            <Input
+              id="sync-token-device"
+              value={tokenDeviceKey}
+              onChange={(event) => setTokenDeviceKey(event.target.value)}
+              disabled={busyId !== null || status?.appMode !== "cloud"}
+              data-testid="admin-sync-token-device"
+              placeholder="clinic-server"
+            />
+          </div>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              size="sm"
+              disabled={busyId !== null || status?.appMode !== "cloud"}
+              data-testid="admin-sync-token-rotate"
+              onClick={() => void manageToken("rotate-token")}
+            >
+              {busyId === "rotate-token" ? "Rotating..." : "Rotate token"}
+            </Button>
+          </div>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busyId !== null || status?.appMode !== "cloud"}
+              data-testid="admin-sync-token-revoke"
+              onClick={() => void manageToken("revoke-token")}
+            >
+              {busyId === "revoke-token" ? "Revoking..." : "Revoke token"}
+            </Button>
+          </div>
+        </div>
+        {issuedToken ? (
+          <div className="mt-4 space-y-1" data-testid="admin-sync-issued-token">
+            <p className="text-xs font-medium text-[var(--status-warning-foreground)]">
+              Copy this token now. It is shown once.
+            </p>
+            <Input readOnly value={issuedToken} className="font-mono text-xs" data-testid="admin-sync-token-value" />
+          </div>
+        ) : null}
+        {status?.appMode !== "cloud" ? (
+          <p className="mt-3 text-xs text-muted-foreground">Token management runs from the cloud admin console.</p>
+        ) : null}
       </Panel>
 
       <Panel
@@ -1304,14 +1756,14 @@ function SyncPanel() {
             data-testid="admin-sync-retry-all"
             onClick={() => void retry([], "all")}
           >
-            {busyId === "all" ? "Retryingâ€¦" : "Retry all"}
+            {busyId === "all" ? "Retrying..." : "Retry all"}
           </Button>
         </div>
         <DataTable
           rows={(monitor?.failedRows ?? []).map((row) => ({ ...row, id: row.outboxId }))}
-          columns={columns}
+          columns={failedColumns}
           testId="admin-sync-failed-rows"
-          empty={loading ? "Loading sync rowsâ€¦" : "No failed rows."}
+          empty={loading ? "Loading sync rows..." : "No failed rows."}
         />
       </Panel>
     </div>
