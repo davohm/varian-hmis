@@ -62,6 +62,16 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/procurement",
     description: "Receive goods, set reorder levels and review stock valuation.",
   },
+  hr_officer: {
+    label: "HR",
+    href: "/hr",
+    description: "Maintain employees, contracts, shifts, attendance and leave.",
+  },
+  payroll_officer: {
+    label: "Payroll",
+    href: "/payroll",
+    description: "Prepare, approve and post payslips and statutory summaries.",
+  },
   auditor: {
     label: "Audit",
     href: "/finance",
@@ -100,6 +110,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   revenue_cycle_officer: "Revenue Cycle Officer",
   procurement_officer: "Procurement Officer",
   store_manager: "Store Manager",
+  hr_officer: "HR Officer",
+  payroll_officer: "Payroll Officer",
   auditor: "Auditor",
   regulatory_officer: "Regulatory Officer",
   dpo: "Data Protection Officer",
@@ -119,6 +131,8 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "revenue_cycle_officer",
   "procurement_officer",
   "store_manager",
+  "hr_officer",
+  "payroll_officer",
   "auditor",
   "regulatory_officer",
   "dpo",
@@ -171,3 +185,22 @@ export const PROCUREMENT_WRITE_ROLES: Role[] = [
   "finance_officer",
   "admin",
 ];
+
+/** Personnel data is restricted: HR maintains it, payroll consumes it, audit reads it. */
+export const HR_READ_ROLES: Role[] = [
+  "hr_officer",
+  "payroll_officer",
+  "auditor",
+  "admin",
+];
+
+export const HR_WRITE_ROLES: Role[] = ["hr_officer", "admin"];
+
+export const PAYROLL_READ_ROLES: Role[] = [
+  "payroll_officer",
+  "hr_officer",
+  "auditor",
+  "admin",
+];
+
+export const PAYROLL_WRITE_ROLES: Role[] = ["payroll_officer", "admin"];

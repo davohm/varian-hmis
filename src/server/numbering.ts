@@ -20,6 +20,9 @@ export type NumberScope =
   | "goodsReceipt"
   | "supplierInvoice"
   | "supplierPayment"
+  | "employee"
+  | "payrollRun"
+  | "payslip"
   | "breach";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
@@ -38,6 +41,9 @@ const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   goodsReceipt: { infix: "GRN", width: 5 },
   supplierInvoice: { infix: "SINV", width: 5 },
   supplierPayment: { infix: "SPAY", width: 5 },
+  employee: { infix: "EMP", width: 5 },
+  payrollRun: { infix: "PAY", width: 6 },
+  payslip: { infix: "PSL", width: 6 },
   breach: { infix: "BR", width: 5 },
 };
 

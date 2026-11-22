@@ -13,6 +13,8 @@ import {
   ShoppingCart,
   ShieldPlus,
   Stethoscope,
+  Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -34,6 +36,8 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   revenue_cycle_officer: Receipt,
   procurement_officer: ShoppingCart,
   store_manager: Package,
+  hr_officer: Users,
+  payroll_officer: Wallet,
   auditor: ShieldCheck,
   regulatory_officer: ShieldCheck,
   dpo: ShieldCheck,

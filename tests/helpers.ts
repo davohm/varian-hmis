@@ -30,10 +30,13 @@ import {
   dataConsents,
   dataSharingAgreements,
   dataSubjectRequests,
+  attendanceRecords,
   deathNotifications,
   departments,
   diagnoses,
   dispenses,
+  employees,
+  employmentContracts,
   encounters,
   etimsInvoiceLines,
   etimsInvoiceQueue,
@@ -60,6 +63,7 @@ import {
   labResults,
   labTests,
   ledgerAccounts,
+  leaveRequests,
   licenceAlertRules,
   nextOfKin,
   notifiableEvents,
@@ -69,6 +73,11 @@ import {
   payerContracts,
   payers,
   payments,
+  payrollLines,
+  payrollRunApprovals,
+  payrollRuns,
+  payslips,
+  positions,
   practitionerRegistrations,
   purchaseOrderLines,
   purchaseOrders,
@@ -92,6 +101,8 @@ import {
   services,
   session,
   shaAdjudicationCodes,
+  shiftAssignments,
+  shiftTemplates,
   statutoryFeeSchedules,
   statutoryRates,
   stockLedger,
@@ -255,6 +266,20 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(purchaseRequisitions).where(eq(purchaseRequisitions.facilityId, facilityId));
     await tx.delete(reorderLevels).where(eq(reorderLevels.facilityId, facilityId));
     await tx.delete(suppliers).where(eq(suppliers.facilityId, facilityId));
+
+    // Payroll evidence and personnel records are append-only in normal use.
+    // Test teardown removes dependants first, with ledger_cleanup enabled above.
+    await tx.delete(payslips).where(eq(payslips.facilityId, facilityId));
+    await tx.delete(payrollRunApprovals).where(eq(payrollRunApprovals.facilityId, facilityId));
+    await tx.delete(payrollLines).where(eq(payrollLines.facilityId, facilityId));
+    await tx.delete(payrollRuns).where(eq(payrollRuns.facilityId, facilityId));
+    await tx.delete(leaveRequests).where(eq(leaveRequests.facilityId, facilityId));
+    await tx.delete(attendanceRecords).where(eq(attendanceRecords.facilityId, facilityId));
+    await tx.delete(shiftAssignments).where(eq(shiftAssignments.facilityId, facilityId));
+    await tx.delete(employmentContracts).where(eq(employmentContracts.facilityId, facilityId));
+    await tx.delete(shiftTemplates).where(eq(shiftTemplates.facilityId, facilityId));
+    await tx.delete(positions).where(eq(positions.facilityId, facilityId));
+    await tx.delete(employees).where(eq(employees.facilityId, facilityId));
 
     await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
     await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));

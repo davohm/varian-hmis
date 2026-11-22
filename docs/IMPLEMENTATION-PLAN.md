@@ -1,14 +1,14 @@
 # Varian HMIS — Implementation Plan
 
-Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, and Phase 14 is complete and verified with migrations `0027_mixed_ironclad.sql` and `0028_supplier_payment_append_only.sql`.
+Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, and Phase 15 is complete and verified with migration `0029_quiet_meteorite.sql`.
 
 ## Current phase status
 
 | Status | Phases |
 |---|---|
-| Complete | 1–14, 19, 21 |
+| Complete | 1–15, 19, 21 |
 | Partial | 17, 18, 20 |
-| Missing | 15, 16, 22 |
+| Missing | 16, 22 |
 | New / pending | Phase 0 — Initial Configuration |
 
 ### Outstanding work summary
@@ -16,7 +16,7 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - **Phase 12 — Finance foundation:** complete and deployed as `c44f9fd` — ledger, journals, reversal, periods, statements and data-driven approval limits by facility/role/action with an admin-only configuration panel, audit and sync rows. Migration `0025_spooky_ikaris.sql` has been applied to production Neon and the local FAM branch database; it must be applied to every other target database before enforcement is relied on there.
 - **Phase 13 — Revenue cycle:** complete and deployed as `05360b0932f9f99d5300a628bc6d90b66d5a70fb` — payers, contracts, benefits, pre-authorisations, claims, claim lines, remittances and denials, with command-layer segregation of duties enforced by actor identity. Migration `0026_breezy_korg.sql` has been applied to the local dev database, the local FAM branch database and production Neon; it must be applied to every other target database before the new actor columns are relied on there.
 - **Phase 14 — Procurement and inventory:** complete and verified — suppliers, requisitions with approvals, RFQs and supplier quotes, LPOs, GRNs against the existing append-only stock ledger, supplier invoices with three-way matching, supplier payments, AP/GL postings, reorder alerts and stock valuation. Migrations `0027_mixed_ironclad.sql` and `0028_supplier_payment_append_only.sql` have been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply them before procurement is relied on there.
-- **Phase 15 — HR and payroll:** not implemented.
+- **Phase 15 — HR and payroll:** complete and verified — employee/position/contract, rota, attendance and leave records; rate-driven payroll preparation, SoD approval, finance approval ceiling, GL posting and immutable payslips. Migration `0029_quiet_meteorite.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0029` before these controls are relied on there.
 - **Phase 16 — Assets and maintenance:** not implemented.
 - **Phase 17 — ERP reporting and controls:** report catalogue, saved views, exports, approval inbox, drill-down, supplier ageing, stock valuation and payroll summaries are missing.
 - **Phase 18 — Kenya master data / licences / IDs:** implementation exists, but the dedicated 19-rule test suite is missing and the reporting hook depends on Phase 20.
@@ -49,6 +49,15 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - Enforced segregation of duties in the command layer: requisition approver ≠ requester, purchaser ≠ requester, PO approver ≠ purchaser/requester, receiver ≠ purchaser/approver, and payment recorder ≠ invoice recorder. Finance approval limits now cover `approveRequisition`, `approvePurchaseOrder` and `recordSupplierPayment`.
 - Added the guarded `/api/procurement` workspace and tabbed UI for suppliers, requisitions, sourcing, orders and receiving, following the existing ERP shell and role maps.
 - Added `tests/procurement.test.ts` for the full chain, three-way-match rejection, all SoD refusals, approval-limit ceilings, stock valuation, reorder alerts, AP/GL postings, append-only/no-hard-delete guards, audit and outbox rows; extended naming and sync-registry tests. Full suite result is recorded in the ship report.
+
+### Phase 15 progress (complete and verified)
+
+- Added `0029_quiet_meteorite.sql` with 11 HR/payroll tables, UUIDv7 keys, facility scoping, no-hard-delete triggers on every table, append-only UPDATE/DELETE guards on payroll lines, payslips and approvals, explicit sync capture, and backfill of the seven payroll system roles in the default chart. All facilities already installed received the missing payroll accounts without overwriting local chart edits.
+- Added restricted `hr_officer` and `payroll_officer` roles with separate `/hr` and `/payroll` workspaces behind guarded API endpoints. Personnel data is readable only by HR, payroll and audit roles; writes remain HR/payroll only and facility/actor are injected server-side.
+- HR commands cover positions, employees, contracts, shifts, attendance and leave. A new contract supersedes the prior active contract; absent/leave attendance records zero hours; leave requester ≠ decider; approved leave cannot overlap another approved period; rejected leave requires a reason.
+- Payroll rates are read at run time from admin-entered `statutory_rates`; no statutory value is hard-coded. Unset rates compute zero and are carried as `missingRateTypes` warnings through the run, lines and overview. A `test_placeholder_statutory_rate` row is explicitly test-only and is never treated as a statutory rate.
+- Payroll preparation uses active contracts covering the period and gap-free `EMP`, `PAY` and `PSL` numbering. Approval requires a different actor from the preparer and is capped by the `approvePayrollRun` finance approval limit for the approver's server-resolved role. Posting writes one balanced journal using the mapped salary, employer-NSSF and payable accounts, then issues append-only payslip snapshots.
+- Added `tests/hr-payroll.test.ts` covering HR lifecycle and SoD, admin-rate arithmetic, missing-rate warnings, approval ceiling, balanced GL postings, payslips, audit/outbox rows and database protection guards; extended naming and sync-registry coverage. Full suite result is recorded in the ship report.
 
 ## Phase 0 — Initial Configuration (First-Run Setup)
 

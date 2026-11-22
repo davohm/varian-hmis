@@ -95,6 +95,18 @@ export const SYNC_OUTBOUND_TABLES = [
   "supplier_invoice_lines",
   "supplier_payments",
   "reorder_levels",
+  // HR and payroll
+  "employees",
+  "positions",
+  "employment_contracts",
+  "shift_templates",
+  "shift_assignments",
+  "attendance_records",
+  "leave_requests",
+  "payroll_runs",
+  "payroll_lines",
+  "payslips",
+  "payroll_run_approvals",
   "report_definitions",
   "report_runs",
   "report_cells",
@@ -147,6 +159,9 @@ export const SYNC_APPEND_ONLY_TABLES = [
   "etims_invoice_lines",
   "etims_transmission_log",
   "supplier_payments",
+  "payroll_lines",
+  "payslips",
+  "payroll_run_approvals",
 ] as const;
 
 /**
@@ -224,6 +239,18 @@ export const SYNC_NO_HARD_DELETE_TABLES = [
   "supplier_invoice_lines",
   "supplier_payments",
   "reorder_levels",
+  // Personnel and payroll history; retire by status, never delete.
+  "employees",
+  "positions",
+  "employment_contracts",
+  "shift_templates",
+  "shift_assignments",
+  "attendance_records",
+  "leave_requests",
+  "payroll_runs",
+  "payroll_lines",
+  "payslips",
+  "payroll_run_approvals",
 ] as const;
 
 export const SYNC_BUSINESS_KEY_TABLES = {

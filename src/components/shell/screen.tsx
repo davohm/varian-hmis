@@ -7,6 +7,7 @@ import {
   Building2,
   ClipboardCheck,
   ClipboardList,
+  FileClock,
   FileText,
   FlaskConical,
   HeartPulse,
@@ -219,6 +220,40 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       label: "Stock valuation",
       description: "Review on-hand value from the append-only ledger.",
       icon: Wallet,
+    },
+  ],
+  hr_officer: [
+    {
+      label: "Employee master",
+      description: "Keep identifiers, bank details and status current.",
+      icon: Users,
+    },
+    {
+      label: "Contracts and rota",
+      description: "Maintain positions, contracts, shifts and attendance.",
+      icon: ClipboardList,
+    },
+    {
+      label: "Leave",
+      description: "Review requested and decided leave with an audit trail.",
+      icon: FileClock,
+    },
+  ],
+  payroll_officer: [
+    {
+      label: "Payroll runs",
+      description: "Prepare runs from active contracts and entered rates.",
+      icon: Wallet,
+    },
+    {
+      label: "Payslips",
+      description: "Issue immutable slips for a posted run.",
+      icon: FileText,
+    },
+    {
+      label: "Statutory summary",
+      description: "Review PAYE, NSSF, SHIF and housing levy totals.",
+      icon: Scale,
     },
   ],
   auditor: [

@@ -1214,7 +1214,7 @@ export async function upsertFacilitySetting(
 export const upsertStatutoryRateSchema = z.object({
   ...baseSchema,
   rateId: z.uuid().nullable().optional(),
-  rateType: z.enum(["paye_band", "nssf_tier", "shif", "housing_levy", "other"]),
+  rateType: z.enum(["paye_band", "nssf_tier", "nssf_employer", "shif", "housing_levy", "other"]),
   bandOrder: z.number().int().min(0),
   lowerBound: money,
   upperBound: money.nullable().optional(),

@@ -26,6 +26,9 @@ describe("numbering", () => {
     expect(formatNumber("FAM", "goodsReceipt", 123, date)).toBe("FAM-GRN-26-00123");
     expect(formatNumber("FAM", "supplierInvoice", 123, date)).toBe("FAM-SINV-26-00123");
     expect(formatNumber("FAM", "supplierPayment", 123, date)).toBe("FAM-SPAY-26-00123");
+    expect(formatNumber("FAM", "employee", 123, date)).toBe("FAM-EMP-26-00123");
+    expect(formatNumber("FAM", "payrollRun", 123, date)).toBe("FAM-PAY-26-000123");
+    expect(formatNumber("FAM", "payslip", 123, date)).toBe("FAM-PSL-26-000123");
   });
 
   it("allocates 50 parallel numbers with no gaps and no duplicates", async () => {

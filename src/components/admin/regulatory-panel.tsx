@@ -1443,7 +1443,7 @@ function StatutorySection({ data, busy, run }: { data: RegulatoryPayload; busy: 
               label: "Rate type",
               type: "select",
               required: true,
-              options: ["paye_band", "nssf_tier", "shif", "housing_levy", "other"].map((value) => ({
+              options: ["paye_band", "nssf_tier", "nssf_employer", "shif", "housing_levy", "other"].map((value) => ({
                 value,
                 label: value.replaceAll("_", " "),
               })),

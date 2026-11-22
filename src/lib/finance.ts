@@ -58,6 +58,7 @@ export const FINANCE_APPROVAL_ACTIONS = [
   "approveRequisition",
   "approvePurchaseOrder",
   "recordSupplierPayment",
+  "approvePayrollRun",
 ] as const;
 export type FinanceApprovalAction = (typeof FINANCE_APPROVAL_ACTIONS)[number];
 
@@ -67,6 +68,7 @@ export const FINANCE_APPROVAL_ACTION_LABELS: Record<FinanceApprovalAction, strin
   approveRequisition: "Approve requisition",
   approvePurchaseOrder: "Approve purchase order",
   recordSupplierPayment: "Record supplier payment",
+  approvePayrollRun: "Approve payroll run",
 };
 
 /** Roles that can hold a finance or procurement approval limit. Limits are never defaulted. */
@@ -75,6 +77,8 @@ export const FINANCE_APPROVAL_ROLES = [
   "finance_officer",
   "procurement_officer",
   "store_manager",
+  "hr_officer",
+  "payroll_officer",
   "admin",
 ] as const;
 export type FinanceApprovalRole = (typeof FINANCE_APPROVAL_ROLES)[number];
@@ -84,6 +88,8 @@ export const FINANCE_APPROVAL_ROLE_LABELS: Record<FinanceApprovalRole, string> =
   finance_officer: "Finance Officer",
   procurement_officer: "Procurement Officer",
   store_manager: "Store Manager",
+  hr_officer: "HR Officer",
+  payroll_officer: "Payroll Officer",
   admin: "Administrator",
 };
 
@@ -294,6 +300,36 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultLedgerAccount[] = [
     type: "liability",
     systemRole: "patient_deposits",
   },
+  {
+    code: "2110",
+    name: "Payroll payable",
+    type: "liability",
+    systemRole: "payroll_payable",
+  },
+  {
+    code: "2120",
+    name: "PAYE payable",
+    type: "liability",
+    systemRole: "paye_payable",
+  },
+  {
+    code: "2130",
+    name: "NSSF payable",
+    type: "liability",
+    systemRole: "nssf_payable",
+  },
+  {
+    code: "2140",
+    name: "SHIF payable",
+    type: "liability",
+    systemRole: "shif_payable",
+  },
+  {
+    code: "2150",
+    name: "Housing levy payable",
+    type: "liability",
+    systemRole: "housing_levy_payable",
+  },
   { code: "3000", name: "Retained earnings", type: "equity", systemRole: null },
   {
     code: "4000",
@@ -302,7 +338,18 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultLedgerAccount[] = [
     systemRole: "service_revenue",
   },
   { code: "5000", name: "Clinical supplies", type: "expense", systemRole: null },
-  { code: "5100", name: "Salaries and wages", type: "expense", systemRole: null },
+  {
+    code: "5100",
+    name: "Salaries and wages",
+    type: "expense",
+    systemRole: "salaries_expense",
+  },
+  {
+    code: "5110",
+    name: "Employer NSSF contribution",
+    type: "expense",
+    systemRole: "nssf_expense",
+  },
   { code: "5200", name: "Rent", type: "expense", systemRole: null },
   { code: "5300", name: "Utilities", type: "expense", systemRole: null },
 ];
