@@ -6,10 +6,9 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 
 | Status | Phases |
 |---|---|
-| Complete | 1-17, 19, 21 |
-| Partial | 18, 20 |
+| Complete | 0-19, 21 |
+| Partial | 20 |
 | Missing | 22 |
-| New / pending | Phase 0 — Initial Configuration |
 
 ### Outstanding work summary
 
@@ -19,7 +18,7 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - **Phase 15 — HR and payroll:** complete and verified — employee/position/contract, rota, attendance and leave records; rate-driven payroll preparation, SoD approval, finance approval ceiling, GL posting and immutable payslips. Migration `0029_quiet_meteorite.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0029` before these controls are relied on there.
 - **Phase 16 — Assets and maintenance:** complete and verified — asset register with append-only custodian/location events, straight-line depreciation with SoD approval and GL posting, maintenance orders with immutable event history and cost postings, revaluation/impairment and disposal workflows with balanced journals, audit/outbox capture and database-level no-hard-delete/append-only guards. Migration `0030_vengeful_terror.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0030` before these controls are relied on there.
 - **Phase 17 - ERP reporting and controls:** complete and verified - report catalogue seeded with Prompt 17 ERP reports, saved report views, CSV export, approval inbox, drill-down to journal lines and audit trail, and report generation/snapshot commands through the audited/idempotent command layer. Migration `0031_erp_reporting_controls.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other active branch databases must apply it before relying on Phase 17 controls there.
-- **Phase 18 — Kenya master data / licences / IDs:** implementation exists, but the dedicated 19-rule test suite is missing and the reporting hook depends on Phase 20.
+- **Phase 18 — Kenya master data / licences / IDs:** complete — regulatory schema/commands/queries/lib/seed/UI implemented; `assertFacilityReady` wired into billing and revenue; dedicated 19-rule Prompt 18 test suite added and passing. Reporting hook into Phase 20 report generation remains deferred until Phase 20 report generation exists.
 - **Phase 20 — MOH statutory reporting:** schema and helpers exist, but reporting commands/queries, `/reports` UI, MOH row generators, export/submit/void and drill-down are missing.
 - **Phase 22 — SHA / SHIF revenue cycle:** not implemented.
 
