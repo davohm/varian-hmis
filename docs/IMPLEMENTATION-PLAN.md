@@ -1,13 +1,13 @@
 # Varian HMIS — Implementation Plan
 
-Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, Phase 15 as `542f7b356d8558a3882de0ef5c23d8c52fbf9752`, and Phase 16 is complete and verified with migration `0030_vengeful_terror.sql` in the current ship commit.
+Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, Phase 15 as `542f7b356d8558a3882de0ef5c23d8c52fbf9752`, Phase 16 as `2bc2d666264d7edd2eb89edc09bf4e71bdb70a1d`, and Phase 17 is complete and verified with migration `0031_erp_reporting_controls.sql` in the current ship commit.
 
 ## Current phase status
 
 | Status | Phases |
 |---|---|
-| Complete | 1–16, 19, 21 |
-| Partial | 17, 18, 20 |
+| Complete | 1-17, 19, 21 |
+| Partial | 18, 20 |
 | Missing | 22 |
 | New / pending | Phase 0 — Initial Configuration |
 
@@ -18,7 +18,7 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - **Phase 14 — Procurement and inventory:** complete and verified — suppliers, requisitions with approvals, RFQs and supplier quotes, LPOs, GRNs against the existing append-only stock ledger, supplier invoices with three-way matching, supplier payments, AP/GL postings, reorder alerts and stock valuation. Migrations `0027_mixed_ironclad.sql` and `0028_supplier_payment_append_only.sql` have been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply them before procurement is relied on there.
 - **Phase 15 — HR and payroll:** complete and verified — employee/position/contract, rota, attendance and leave records; rate-driven payroll preparation, SoD approval, finance approval ceiling, GL posting and immutable payslips. Migration `0029_quiet_meteorite.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0029` before these controls are relied on there.
 - **Phase 16 — Assets and maintenance:** complete and verified — asset register with append-only custodian/location events, straight-line depreciation with SoD approval and GL posting, maintenance orders with immutable event history and cost postings, revaluation/impairment and disposal workflows with balanced journals, audit/outbox capture and database-level no-hard-delete/append-only guards. Migration `0030_vengeful_terror.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0030` before these controls are relied on there.
-- **Phase 17 — ERP reporting and controls:** report catalogue, saved views, exports, approval inbox, drill-down, supplier ageing, stock valuation and payroll summaries are missing.
+- **Phase 17 - ERP reporting and controls:** complete and verified - report catalogue seeded with Prompt 17 ERP reports, saved report views, CSV export, approval inbox, drill-down to journal lines and audit trail, and report generation/snapshot commands through the audited/idempotent command layer. Migration `0031_erp_reporting_controls.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other active branch databases must apply it before relying on Phase 17 controls there.
 - **Phase 18 — Kenya master data / licences / IDs:** implementation exists, but the dedicated 19-rule test suite is missing and the reporting hook depends on Phase 20.
 - **Phase 20 — MOH statutory reporting:** schema and helpers exist, but reporting commands/queries, `/reports` UI, MOH row generators, export/submit/void and drill-down are missing.
 - **Phase 22 — SHA / SHIF revenue cycle:** not implemented.
@@ -68,6 +68,14 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - Maintenance orders move through open, in-progress and completed with immutable event history. Completion posts parts and labour to maintenance expense and cash/bank/AP, returns the asset to service, and refuses a zero-cost order with no payment method.
 - Revaluation, impairment and disposal use dedicated approval records, SoD and finance approval ceilings. Posting writes the required fixed-asset, reserve, impairment, proceeds, gain or loss journals and retires disposed assets without deleting history.
 - Added `tests/assets.test.ts` covering register history and idempotency, depreciation SoD/limits/GL, maintenance lifecycle and GL, revaluation GL, disposal gain GL, and database/sync protection guards. Full suite: 27 files / 319 tests passing.
+
+### Phase 17 progress (complete and verified)
+
+- Added `0031_erp_reporting_controls.sql` with `report_saved_views` (facility-scoped, UUIDv7, owner/shared filters/columns, active flag, audit columns), sync registry/no-hard-delete trigger registration, and seeded Prompt 17 `ERP_*` report catalogue rows via idempotent upsert.
+- Added `/reports` workspace guarded by `REPORT_READ_ROLES` with report catalogue, date/as-of filters, saved views, CSV export, approval inbox, report snapshot generation, and drill-down to source journal lines and audit trail.
+- Added `src/server/queries/reporting.ts` and `src/server/commands/reporting.ts` for ERP report data assembly, catalogue ensure/upsert, saved-view/report-run commands, export marking, and audit/event capture through the idempotent command layer.
+- ERP report coverage includes financial statements, trial balance, supplier ageing, claim ageing, stock valuation, budget variance, payroll summary, and approval inbox. Existing Prompt 20 statutory report catalogue remains separate.
+- Added `tests/erp-reporting.test.ts` and updated `tests/reporting.test.ts` and `tests/helpers.ts`. Local verification: typecheck, lint, build passed; required local full test run `318 passed | 3 failed (321)` with 3 pre-existing/environment failures (`doctor.test.ts` ICD-10 search flake in full suite, passed in isolation; 2 `regulatory-placeholders.test.ts` failures caused by stale local TEST regulatory profile row, cleared and both passed in isolation). Screenshots/changelog: N/A for authenticated backend/admin ERP phase.
 
 ## Phase 0 — Initial Configuration (First-Run Setup)
 

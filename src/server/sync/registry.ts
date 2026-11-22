@@ -121,6 +121,7 @@ export const SYNC_OUTBOUND_TABLES = [
   "report_definitions",
   "report_runs",
   "report_cells",
+  "report_saved_views",
   "birth_notifications",
   "death_notifications",
   "notifiable_events",
@@ -226,6 +227,7 @@ export const SYNC_NO_HARD_DELETE_TABLES = [
   "etims_transmission_log",
   "report_runs",
   "report_cells",
+  "report_saved_views",
   // Privacy, audit and regulatory evidence
   "audit_log",
   "chart_access_log",

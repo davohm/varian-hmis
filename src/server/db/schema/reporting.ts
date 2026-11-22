@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -143,6 +144,40 @@ export const reportDefinitions = pgTable(
   }),
 );
 
+/**
+ * Per-user report filters and column choices. Saved views are configuration,
+ * not evidence, but they still carry facility scope and audit columns so a
+ * branch can sync them and an administrator can trace who changed a view.
+ */
+export const reportSavedViews = pgTable(
+  "report_saved_views",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    reportCode: varchar("report_code", { length: 64 }).notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    ownerId: text("owner_id").notNull(),
+    shared: boolean("shared").notNull().default(false),
+    filters: jsonb("filters").$type<Record<string, unknown>>().notNull().default({}),
+    columns: text("columns").array(),
+    active: boolean("active").notNull().default(true),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityOwnerNameIdx: uniqueIndex("report_saved_views_facility_owner_name_idx").on(
+      table.facilityId,
+      table.ownerId,
+      table.name,
+    ),
+    facilityReportIdx: index("report_saved_views_facility_report_idx").on(
+      table.facilityId,
+      table.reportCode,
+    ),
+  }),
+);
+
 export const notifiableEvents = pgTable(
   "notifiable_events",
   {
@@ -242,6 +277,7 @@ export type ReportCatalogue = typeof reportCatalogue.$inferSelect;
 export type ReportRun = typeof reportRuns.$inferSelect;
 export type ReportCell = typeof reportCells.$inferSelect;
 export type ReportDefinition = typeof reportDefinitions.$inferSelect;
+export type ReportSavedView = typeof reportSavedViews.$inferSelect;
 export type NotifiableEvent = typeof notifiableEvents.$inferSelect;
 export type BirthNotification = typeof birthNotifications.$inferSelect;
 export type DeathNotification = typeof deathNotifications.$inferSelect;

@@ -104,6 +104,7 @@ import {
   reportCells,
   reportDefinitions,
   reportRuns,
+  reportSavedViews,
   retentionPolicies,
   rfqLines,
   rfqs,
@@ -340,6 +341,7 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(triageVitals).where(eq(triageVitals.facilityId, facilityId));
     await tx.delete(queueEntries).where(eq(queueEntries.facilityId, facilityId));
     await tx.delete(reportCells).where(eq(reportCells.facilityId, facilityId));
+    await tx.delete(reportSavedViews).where(eq(reportSavedViews.facilityId, facilityId));
     await tx.delete(reportRuns).where(eq(reportRuns.facilityId, facilityId));
     await tx.delete(reportDefinitions).where(eq(reportDefinitions.facilityId, facilityId));
     await tx.delete(notifiableEvents).where(eq(notifiableEvents.facilityId, facilityId));

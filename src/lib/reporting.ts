@@ -127,6 +127,124 @@ export const PROMPT20_REPORTS: readonly ReportCatalogueSeed[] = [
   },
 ] as const;
 
+/** Prompt 17 management and control reports. Codes are stable sync keys. */
+export const ERP_REPORT_CODES = [
+  "ERP_FINANCIAL_STATEMENTS",
+  "ERP_TRIAL_BALANCE",
+  "ERP_SUPPLIER_AGEING",
+  "ERP_CLAIM_AGEING",
+  "ERP_STOCK_VALUATION",
+  "ERP_BUDGET_VARIANCE",
+  "ERP_PAYROLL_SUMMARY",
+  "ERP_APPROVAL_INBOX",
+] as const;
+
+export type ErpReportCode = (typeof ERP_REPORT_CODES)[number];
+
+export function isErpReportCode(value: string): value is ErpReportCode {
+  return (ERP_REPORT_CODES as readonly string[]).includes(value);
+}
+
+/** Prompt 17 catalogue seeds; these share the Prompt 20 catalogue table. */
+export const PROMPT17_ERP_REPORTS: readonly ReportCatalogueSeed[] = [
+  {
+    reportCode: "ERP_FINANCIAL_STATEMENTS",
+    name: "Financial statements",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["journal_entries", "journal_lines", "ledger_accounts"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_TRIAL_BALANCE",
+    name: "Trial balance",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["journal_entries", "journal_lines", "ledger_accounts"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_SUPPLIER_AGEING",
+    name: "Supplier ageing",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["suppliers", "supplier_invoices", "supplier_payments"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_CLAIM_AGEING",
+    name: "Payer and claim ageing",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["payers", "claims", "remittances"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_STOCK_VALUATION",
+    name: "Stock valuation",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["stock_ledger", "item_batches", "items"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_BUDGET_VARIANCE",
+    name: "Budget variance",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["budgets", "budget_lines", "journal_lines"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_PAYROLL_SUMMARY",
+    name: "Payroll summary",
+    domain: "erp",
+    schedule: "monthly",
+    periodType: "month",
+    sourceEntities: ["payroll_runs", "payroll_lines", "payslips"],
+    outputFormats: ["screen", "print", "csv", "xlsx", "pdf"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+  {
+    reportCode: "ERP_APPROVAL_INBOX",
+    name: "Approval inbox",
+    domain: "erp",
+    schedule: "daily",
+    periodType: "day",
+    sourceEntities: [
+      "budgets",
+      "purchase_requisitions",
+      "purchase_orders",
+      "payroll_runs",
+      "depreciation_runs",
+      "asset_valuations",
+      "asset_disposals",
+    ],
+    outputFormats: ["screen", "print", "csv"],
+    authority: "Varian ERP",
+    templateVersion: "2026.11",
+  },
+] as const;
+
 export interface EpiWeekInfo {
   epiWeek: number;
   epiYear: number;

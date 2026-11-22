@@ -21,7 +21,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { ROLE_LABELS, ROLE_NAV } from "@/lib/navigation";
+import { REPORT_READ_ROLES, ROLE_LABELS, ROLE_NAV } from "@/lib/navigation";
 import type { Role } from "@/server/db/schema/staff";
 import { cn } from "@/lib/utils";
 
@@ -57,6 +57,8 @@ export function Sidebar({ role }: SidebarProps) {
   const active = item
     ? pathname === item.href || pathname.startsWith(`${item.href}/`)
     : false;
+  const canViewReports = role ? REPORT_READ_ROLES.includes(role) : false;
+  const reportsActive = pathname === "/reports" || pathname.startsWith("/reports/");
 
   return (
     <aside className="flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
@@ -101,6 +103,22 @@ export function Sidebar({ role }: SidebarProps) {
         ) : (
           <p className="px-3 py-2 text-sm text-sidebar-foreground/70">No role assigned.</p>
         )}
+        {canViewReports ? (
+          <Link
+            href="/reports"
+            data-testid="nav-reports"
+            aria-current={reportsActive ? "page" : undefined}
+            className={cn(
+              "relative mt-2 flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+              reportsActive
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+            )}
+          >
+            <ClipboardList className="size-4" aria-hidden="true" />
+            <span>Reports</span>
+          </Link>
+        ) : null}
       </nav>
 
       <div className="border-t border-sidebar-border px-5 py-4">

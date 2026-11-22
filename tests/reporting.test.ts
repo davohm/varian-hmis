@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ERP_REPORT_CODES,
+  PROMPT17_ERP_REPORTS,
   PROMPT20_REPORTS,
   computeReportChecksum,
   daysInMonth,
@@ -22,6 +24,20 @@ describe("reporting utilities", () => {
       "MOH710B",
       "MOH416",
       "MOH735",
+    ]);
+  });
+
+  it("exposes the prompt 17 ERP management reports", () => {
+    expect(PROMPT17_ERP_REPORTS).toHaveLength(8);
+    expect(ERP_REPORT_CODES).toEqual([
+      "ERP_FINANCIAL_STATEMENTS",
+      "ERP_TRIAL_BALANCE",
+      "ERP_SUPPLIER_AGEING",
+      "ERP_CLAIM_AGEING",
+      "ERP_STOCK_VALUATION",
+      "ERP_BUDGET_VARIANCE",
+      "ERP_PAYROLL_SUMMARY",
+      "ERP_APPROVAL_INBOX",
     ]);
   });
 

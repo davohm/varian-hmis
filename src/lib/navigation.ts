@@ -224,3 +224,23 @@ export const ASSET_READ_ROLES: Role[] = [
 ];
 
 export const ASSET_WRITE_ROLES: Role[] = ["asset_manager", "finance_officer", "admin"];
+
+/**
+ * Management reports read across finance, revenue, purchasing, stock, payroll
+ * and assets. Every ERP manager can generate and save a view; the underlying
+ * documents remain writable only through their own guarded workspaces.
+ */
+export const REPORT_READ_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "procurement_officer",
+  "store_manager",
+  "hr_officer",
+  "payroll_officer",
+  "asset_manager",
+  "auditor",
+  "admin",
+];
+
+export const REPORT_WRITE_ROLES: Role[] = REPORT_READ_ROLES;
