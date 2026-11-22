@@ -341,6 +341,23 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       icon: ScrollText,
     },
   ],
+  super_admin: [
+    {
+      label: "Staff and roles",
+      description: "Manage staff accounts and facility scopes.",
+      icon: Users,
+    },
+    {
+      label: "Facility setup",
+      description: "Configure branches, stores and catalogues.",
+      icon: Building2,
+    },
+    {
+      label: "Audit and sync",
+      description: "Review writes and connection health.",
+      icon: ScrollText,
+    },
+  ],
 };
 
 interface ScreenProps {

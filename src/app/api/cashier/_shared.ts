@@ -6,7 +6,7 @@ import { actorFromRequest, requireApiFacility } from "@/server/auth/api-context"
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 import type { Role } from "@/server/db/schema";
 
-export const CASHIER_ROLES: Role[] = ["cashier", "admin"];
+export const CASHIER_ROLES: Role[] = ["cashier", "admin", "super_admin"];
 
 /**
  * Cashier writes are server-side commands. The route injects the facility and

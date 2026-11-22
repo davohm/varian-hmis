@@ -10,7 +10,7 @@ import { branches } from "@/server/db/schema";
 
 export async function POST(request: NextRequest) {
   try {
-    const { facilityId, branchId, staff } = await requireApiFacility(["receptionist", "admin"]);
+    const { facilityId, branchId, staff } = await requireApiFacility(["receptionist", "admin", "super_admin"]);
     const body: unknown = await request.json().catch(() => null);
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Invalid visit details" }, { status: 400 });

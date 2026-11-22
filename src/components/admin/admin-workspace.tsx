@@ -32,7 +32,14 @@ export type Row = { id: string; active?: boolean; isActive?: boolean };
 interface FacilityRow extends Row {
   code: string;
   name: string;
+  registrationDetails: string | null;
+  physicalAddress: string | null;
   county: string | null;
+  phone: string | null;
+  email: string | null;
+  logoUrl: string | null;
+  currency: string;
+  timezone: string;
   writeAuthority: "cloud" | "clinic";
   active: boolean;
 }
@@ -40,6 +47,9 @@ interface FacilityRow extends Row {
 interface BranchRow extends Row {
   code: string;
   name: string;
+  physicalLocation: string | null;
+  telephone: string | null;
+  managerName: string | null;
   isMain: boolean;
   active: boolean;
 }
@@ -486,9 +496,14 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
     if (entity === "facility") {
       common.push(
         { name: "name", label: "Facility name", required: !editing, full: true },
+        { name: "registrationDetails", label: "Registration details", full: true },
+        { name: "physicalAddress", label: "Physical address", full: true },
         { name: "county", label: "County" },
         { name: "phone", label: "Phone" },
         { name: "email", label: "Email" },
+        { name: "logoUrl", label: "Logo / branding URL", placeholder: "https://...", full: true },
+        { name: "currency", label: "Currency", placeholder: "KES" },
+        { name: "timezone", label: "Timezone", placeholder: "Africa/Nairobi" },
         {
           name: "writeAuthority",
           label: "Write authority",
@@ -498,7 +513,6 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
             { value: "clinic", label: "Clinic" },
           ],
         },
-        { name: "timezone", label: "Timezone" },
       );
       if (!editing) common.unshift({ name: "code", label: "Facility code", required: true, placeholder: "FAM" });
       else common.unshift({ name: "id", label: "Facility", type: "select", options: facilityOptions, required: true, disabled: true });
@@ -507,6 +521,9 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
       else common.push({ name: "id", label: "Branch", type: "select", options: branchOptions, required: true, disabled: true });
       common.push(
         { name: "name", label: "Branch name", required: !editing },
+        { name: "physicalLocation", label: "Physical location", full: true },
+        { name: "telephone", label: "Telephone" },
+        { name: "managerName", label: "Branch manager" },
         { name: "isMain", label: "", type: "checkbox", placeholder: "Main branch" },
       );
     } else if (entity === "department") {
@@ -566,9 +583,22 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
   }[entity];
 
   async function submit(values: Record<string, FieldValue>) {
-    const input = compact(values);
+    const nullableFields: Record<string, string[]> = {
+      facility: ["registrationDetails", "physicalAddress", "county", "phone", "email", "logoUrl"],
+      branch: ["physicalLocation", "telephone", "managerName"],
+      department: [],
+      room: [],
+      store: [],
+    };
+    const raw: Record<string, unknown> = { ...values };
+    if (editing) {
+      for (const field of nullableFields[entity] ?? []) {
+        if (raw[field] === "") raw[field] = null;
+      }
+    }
+    const input = compact(raw);
     const ok = await run(
-      "Savingâ€¦",
+      "Saving…",
       editing ? config.update : config.create,
       input,
       `${config.label} ${editing ? "updated" : "created"}.`,
@@ -624,8 +654,39 @@ function FacilitySetupPanel({ overview, busy, run }: PanelProps) {
       },
     ];
     if (entity === "facility") {
+      base.splice(1, 0, {
+        key: "details",
+        label: "Details",
+        render: (row) => {
+          const f = row as FacilityRow;
+          return (
+            <div className="text-xs text-muted-foreground">
+              <div>{f.physicalAddress || f.county || "—"}</div>
+              <div>{[f.phone, f.email].filter(Boolean).join(" · ") || "—"}</div>
+            </div>
+          );
+        },
+      });
+      base.splice(2, 0, {
+        key: "currency",
+        label: "Currency",
+        render: (row) => <span className="font-mono text-xs">{(row as FacilityRow).currency}</span>,
+      });
       base.unshift({ key: "code", label: "Code", render: (row) => <span className="font-mono text-xs">{(row as FacilityRow).code}</span> });
     } else if (entity === "branch") {
+      base.splice(1, 0, {
+        key: "details",
+        label: "Details",
+        render: (row) => {
+          const b = row as BranchRow;
+          return (
+            <div className="text-xs text-muted-foreground">
+              <div>{b.physicalLocation || "—"}</div>
+              <div>{[b.telephone, b.managerName].filter(Boolean).join(" · ") || "—"}</div>
+            </div>
+          );
+        },
+      });
       base.unshift({ key: "code", label: "Code", render: (row) => <span className="font-mono text-xs">{(row as BranchRow).code}</span> });
     } else if (entity === "department") {
       base.unshift({ key: "kind", label: "Kind", render: (row) => (row as DepartmentRow).kind });

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 /** /admin stays the default landing page for administrators with full access. */
 export default async function AdminPage() {
-  const staff = await requireScreen(["admin"]);
+  const staff = await requireScreen(["admin", "super_admin"]);
   const sections = await getAdminSections(staff.user.id, staff.facilityId);
   if (!sections.includes("setup")) {
     const first = sections[0] ?? "setup";

@@ -7,7 +7,7 @@ import { recordTriageVitals } from "@/server/commands/triage";
 
 export async function POST(request: NextRequest) {
   try {
-    const { facilityId, staff } = await requireApiFacility(["triage_nurse", "admin"]);
+    const { facilityId, staff } = await requireApiFacility(["triage_nurse", "admin", "super_admin"]);
     const body: unknown = await request.json().catch(() => null);
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Invalid triage details" }, { status: 400 });

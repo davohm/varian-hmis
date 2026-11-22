@@ -67,6 +67,21 @@ export const changeStaffRoleSchema = z.object({
 });
 export type ChangeStaffRoleInput = z.input<typeof changeStaffRoleSchema>;
 
+async function requireSuperAdminActor(tx: CommandTransaction, facilityId: string, actorId: string) {
+  const rows = await tx
+    .select({ role: staffRoleScopes.role })
+    .from(staffRoleScopes)
+    .where(
+      and(
+        eq(staffRoleScopes.userId, actorId),
+        eq(staffRoleScopes.facilityId, facilityId),
+        eq(staffRoleScopes.role, "super_admin"),
+      ),
+    )
+    .limit(1);
+  if (!rows[0]) throw new Error("Only a super administrator can assign the super_admin role");
+}
+
 async function requireStaffUser(tx: CommandTransaction, userId: string) {
   const rows = await tx
     .select({
@@ -107,7 +122,7 @@ async function validateScopes(tx: CommandTransaction, scopes: z.infer<typeof sco
 
 export async function createStaff(input: CreateStaffInput, options: CommandOptions = {}) {
   const values = createStaffSchema.parse(input);
-  requireActor(values.actor);
+  const actorId = requireActor(values.actor);
   const scopes = uniqueScopes(values.scopes);
   verifyManagedFacilities(scopes.map((scope) => scope.facilityId), values.allowedFacilityIds);
   const passwordHash = await hashPassword(values.password);
@@ -116,6 +131,9 @@ export async function createStaff(input: CreateStaffInput, options: CommandOptio
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
     "createStaff",
     async (tx) => {
+      if (scopes.some((scope) => scope.role === "super_admin")) {
+        await requireSuperAdminActor(tx, values.facilityId, actorId);
+      }
       const existingEmail = await tx
         .select({ id: user.id })
         .from(user)
@@ -210,6 +228,9 @@ export async function updateStaff(input: UpdateStaffInput, options: CommandOptio
           values.allowedFacilityIds,
         );
         const scopes = await validateScopes(tx, values.scopes);
+        if (scopes.some((scope) => scope.role === "super_admin")) {
+          await requireSuperAdminActor(tx, values.facilityId, actorId);
+        }
 
         const conditions = [eq(staffRoleScopes.userId, values.userId)];
         if (values.allowedFacilityIds) {
@@ -312,12 +333,15 @@ export async function setStaffActive(input: SetStaffActiveInput, options: Comman
 
 export async function changeStaffRole(input: ChangeStaffRoleInput, options: CommandOptions = {}) {
   const values = changeStaffRoleSchema.parse(input);
-  requireActor(values.actor);
+  const actorId = requireActor(values.actor);
 
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
     "changeStaffRole",
     async (tx) => {
+      if (values.role === "super_admin") {
+        await requireSuperAdminActor(tx, values.facilityId, actorId);
+      }
       const current = await tx
         .select({ role: staffRoleScopes.role })
         .from(staffRoleScopes)

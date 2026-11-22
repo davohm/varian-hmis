@@ -6,7 +6,7 @@ import { actorFromRequest, requireApiFacility } from "@/server/auth/api-context"
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 import type { Role } from "@/server/db/schema";
 
-export const PHARMACY_ROLES: Role[] = ["pharmacist", "admin"];
+export const PHARMACY_ROLES: Role[] = ["pharmacist", "admin", "super_admin"];
 
 /**
  * Every pharmacy write is a server-side command: the route only injects the

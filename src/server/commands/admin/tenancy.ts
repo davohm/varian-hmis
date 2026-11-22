@@ -16,6 +16,7 @@ import { adminBaseSchema, codeSchema, requireActor, writeAdminAudit } from "./sh
 
 const nameSchema = z.string().trim().min(2).max(120);
 const optionalText = z.string().trim().max(255).nullable().optional();
+const optionalLongText = z.string().trim().max(2000).nullable().optional();
 const departmentKindSchema = z.enum([
   "opd",
   "triage",
@@ -35,24 +36,31 @@ const managedSchema = z.object({
 const facilityFields = z.object({
   code: codeSchema.transform((value) => value.toUpperCase()).optional(),
   name: nameSchema.optional(),
+  registrationDetails: optionalLongText,
+  physicalAddress: optionalLongText,
   county: optionalText,
   phone: optionalText,
   email: z.email().max(255).nullable().optional(),
+  logoUrl: z.string().trim().url().max(2048).nullable().optional(),
+  currency: z.string().trim().length(3).toUpperCase().optional(),
   writeAuthority: writeAuthoritySchema.optional(),
   timezone: z.string().trim().min(3).max(64).optional(),
 });
 
-export const createFacilitySchema = z
-  .object({
-    ...adminBaseSchema,
-    code: codeSchema.transform((value) => value.toUpperCase()),
-    name: nameSchema,
-    county: optionalText,
-    phone: optionalText,
-    email: z.email().max(255).nullable().optional(),
-    writeAuthority: writeAuthoritySchema.default("cloud"),
-    timezone: z.string().trim().min(3).max(64).default("Africa/Nairobi"),
-  });
+export const createFacilitySchema = z.object({
+  ...adminBaseSchema,
+  code: codeSchema.transform((value) => value.toUpperCase()),
+  name: nameSchema,
+  registrationDetails: optionalLongText,
+  physicalAddress: optionalLongText,
+  county: optionalText,
+  phone: optionalText,
+  email: z.email().max(255).nullable().optional(),
+  logoUrl: z.string().trim().url().max(2048).nullable().optional(),
+  currency: z.string().trim().length(3).toUpperCase().default("KES"),
+  writeAuthority: writeAuthoritySchema.default("cloud"),
+  timezone: z.string().trim().min(3).max(64).default("Africa/Nairobi"),
+});
 export type CreateFacilityInput = z.input<typeof createFacilitySchema>;
 
 export const updateFacilitySchema = z
@@ -72,6 +80,9 @@ export const createBranchSchema = z.object({
   ...adminBaseSchema,
   code: codeSchema.transform((value) => value.toUpperCase()),
   name: nameSchema,
+  physicalLocation: optionalLongText,
+  telephone: optionalText,
+  managerName: optionalText,
   isMain: z.boolean().default(false),
 });
 export type CreateBranchInput = z.input<typeof createBranchSchema>;
@@ -82,9 +93,21 @@ export const updateBranchSchema = z
     id: z.uuid(),
     code: codeSchema.transform((value) => value.toUpperCase()).optional(),
     name: nameSchema.optional(),
+    physicalLocation: optionalLongText,
+    telephone: optionalText,
+    managerName: optionalText,
     isMain: z.boolean().optional(),
   })
-  .refine((value) => value.code !== undefined || value.name !== undefined || value.isMain !== undefined, "No branch changes supplied");
+  .refine(
+    (value) =>
+      value.code !== undefined ||
+      value.name !== undefined ||
+      value.physicalLocation !== undefined ||
+      value.telephone !== undefined ||
+      value.managerName !== undefined ||
+      value.isMain !== undefined,
+    "No branch changes supplied",
+  );
 export type UpdateBranchInput = z.input<typeof updateBranchSchema>;
 
 export const setBranchActiveSchema = z.object({
@@ -234,9 +257,13 @@ export async function createFacility(input: CreateFacilityInput, options: Comman
         id,
         code: values.code,
         name: values.name,
+        registrationDetails: values.registrationDetails ?? null,
+        physicalAddress: values.physicalAddress ?? null,
         county: values.county ?? null,
         phone: values.phone ?? null,
         email: values.email ?? null,
+        logoUrl: values.logoUrl ?? null,
+        currency: values.currency,
         writeAuthority: values.writeAuthority,
         timezone: values.timezone,
         active: true,
@@ -296,9 +323,13 @@ export async function updateFacility(input: UpdateFacilityInput, options: Comman
         .set({
           code: values.code,
           name: values.name,
+          registrationDetails: values.registrationDetails,
+          physicalAddress: values.physicalAddress,
           county: values.county,
           phone: values.phone,
           email: values.email,
+          logoUrl: values.logoUrl,
+          currency: values.currency,
           writeAuthority: values.writeAuthority,
           timezone: values.timezone,
           ...touch(),
@@ -385,6 +416,9 @@ export async function createBranch(input: CreateBranchInput, options: CommandOpt
         facilityId: values.facilityId,
         code: values.code,
         name: values.name,
+        physicalLocation: values.physicalLocation ?? null,
+        telephone: values.telephone ?? null,
+        managerName: values.managerName ?? null,
         isMain: values.isMain,
         active: true,
         createdBy: actorId,
@@ -441,6 +475,9 @@ export async function updateBranch(input: UpdateBranchInput, options: CommandOpt
         .set({
           code: values.code,
           name: values.name,
+          physicalLocation: values.physicalLocation,
+          telephone: values.telephone,
+          managerName: values.managerName,
           isMain: values.isMain,
           ...touch(),
         })

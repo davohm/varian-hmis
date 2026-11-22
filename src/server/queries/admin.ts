@@ -25,7 +25,14 @@ export interface FacilityOption {
   id: string;
   code: string;
   name: string;
+  registrationDetails: string | null;
+  physicalAddress: string | null;
   county: string | null;
+  phone: string | null;
+  email: string | null;
+  logoUrl: string | null;
+  currency: string;
+  timezone: string;
   writeAuthority: "cloud" | "clinic";
   active: boolean;
 }
@@ -42,7 +49,14 @@ export async function listAdminFacilities(
       id: facilities.id,
       code: facilities.code,
       name: facilities.name,
+      registrationDetails: facilities.registrationDetails,
+      physicalAddress: facilities.physicalAddress,
       county: facilities.county,
+      phone: facilities.phone,
+      email: facilities.email,
+      logoUrl: facilities.logoUrl,
+      currency: facilities.currency,
+      timezone: facilities.timezone,
       writeAuthority: facilities.writeAuthority,
       active: facilities.active,
     })
@@ -57,6 +71,9 @@ export async function listBranches(database: AdminDatabase, facilityId: string) 
       id: branches.id,
       code: branches.code,
       name: branches.name,
+      physicalLocation: branches.physicalLocation,
+      telephone: branches.telephone,
+      managerName: branches.managerName,
       isMain: branches.isMain,
       active: branches.active,
     })
@@ -169,7 +186,10 @@ export async function listAdminSectionAccess(
       .from(staffRoleScopes)
       .innerJoin(user, eq(staffRoleScopes.userId, user.id))
       .where(
-        and(eq(staffRoleScopes.facilityId, facilityId), eq(staffRoleScopes.role, "admin")),
+        and(
+          eq(staffRoleScopes.facilityId, facilityId),
+          inArray(staffRoleScopes.role, ["admin", "super_admin"]),
+        ),
       )
       .orderBy(asc(user.name)),
     database

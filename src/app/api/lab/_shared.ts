@@ -5,7 +5,7 @@ import { apiErrorResponse } from "@/server/auth/api-error";
 import { actorFromRequest, requireApiFacility } from "@/server/auth/api-context";
 import type { Role } from "@/server/db/schema";
 
-export const LAB_ROLES: Role[] = ["lab_tech", "admin"];
+export const LAB_ROLES: Role[] = ["lab_tech", "admin", "super_admin"];
 
 /**
  * Every laboratory write is a server-side command: the route only injects the

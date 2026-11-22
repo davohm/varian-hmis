@@ -44,6 +44,7 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   regulatory_officer: ShieldCheck,
   dpo: ShieldCheck,
   admin: ShieldCheck,
+  super_admin: ShieldCheck,
 };
 
 interface SidebarProps {

@@ -5,7 +5,7 @@ import { apiErrorResponse } from "@/server/auth/api-error";
 import { actorFromRequest, requireApiFacility } from "@/server/auth/api-context";
 import type { Role } from "@/server/db/schema";
 
-export const DOCTOR_ROLES: Role[] = ["doctor", "admin"];
+export const DOCTOR_ROLES: Role[] = ["doctor", "admin", "super_admin"];
 
 /**
  * Every doctor write is a server-side command: the route only injects the

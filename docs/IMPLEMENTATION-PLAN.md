@@ -79,9 +79,17 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 
 ## Phase 0 — Initial Configuration (First-Run Setup)
 
-**Status:** Pending
+**Status:** Complete and verified (2026-11-22)
 **Priority:** High — required for clean first-time installation.
 **Placement:** Prerequisite to normal use; runs before the standard login workflow is usable.
+
+### Progress
+
+- Added `super_admin` to `staff_role` schema/enum, RBAC admin-like checks, admin guards/APIs, navigation, shell role maps, and assignable role handling; admin staff commands reject `super_admin` assignment unless the actor is a super admin.
+- Extended tenancy schema/admin commands for facility registration details, physical address, logo/branding URL, currency, timezone, write authority; branch physical location, telephone, and optional manager name. Generated and applied migration `drizzle/0032_foamy_mole_man.sql` locally.
+- Implemented first-run bootstrap command `bootstrapFirstRun`/`getFirstRunStatus` with idempotent replay, single transaction, command log/audit, super admin + Better Auth credential + staff profile + all admin section permissions, facility/branch creation, default chart/cost center, and regulatory defaults.
+- Added install script `npm run setup:first-run -- --config <path>` (JSON config, non-secret summary output) and guided wizard at `/setup` with Admin/Facility/Branches/Review steps. `/login` redirects to `/setup` when first-run is required; `/setup` redirects to `/login` when complete.
+- Added `tests/bootstrap.test.ts` covering status guard, schema validation, fresh-DB bootstrap/idempotency/audit/command log/field persistence, and setup API 409 behavior when installed. Full local gates: typecheck pass, lint pass, build pass, `npm test` with required local DB env 327 passed / 1 failed (328) - only known full-suite flake `tests/doctor.test.ts` "searches ICD-10 by code prefix and description substring", passes in isolation. Screenshots/changelog N/A for authenticated backend/admin phase.
 
 ### Goal
 

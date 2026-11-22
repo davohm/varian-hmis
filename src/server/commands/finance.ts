@@ -81,6 +81,7 @@ async function financeActorRoles(
     .where(eq(user.id, userId))
     .limit(1);
   if (accounts[0]?.role === "admin" && !roles.includes("admin")) roles.push("admin");
+  if (accounts[0]?.role === "super_admin" && !roles.includes("super_admin")) roles.push("super_admin");
   return roles;
 }
 

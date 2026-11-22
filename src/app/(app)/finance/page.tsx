@@ -16,7 +16,7 @@ export default async function FinancePage() {
     >
       <FinanceWorkspace
         canWrite={canWrite}
-        canManageApprovalLimits={staff.role === "admin"}
+        canManageApprovalLimits={staff.role === "admin" || staff.role === "super_admin"}
       />
     </Screen>
   );

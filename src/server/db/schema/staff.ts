@@ -35,6 +35,7 @@ export const roleEnum = pgEnum("staff_role", [
   "regulatory_officer",
   "dpo",
   "admin",
+  "super_admin",
 ]);
 
 export const staffProfiles = pgTable(

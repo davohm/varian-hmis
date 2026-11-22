@@ -97,6 +97,11 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/admin",
     description: "Manage staff, facilities, catalogues and audit.",
   },
+  super_admin: {
+    label: "Administration",
+    href: "/admin",
+    description: "Configure the installation and manage all facilities and staff.",
+  },
 };
 
 export const ROLE_HOME: Record<Role, string> = Object.fromEntries(
@@ -122,6 +127,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   regulatory_officer: "Regulatory Officer",
   dpo: "Data Protection Officer",
   admin: "Administrator",
+  super_admin: "Super Administrator",
 };
 
 /** Roles an administrator can assign, in display order. */
@@ -144,6 +150,7 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "regulatory_officer",
   "dpo",
   "admin",
+  "super_admin",
 ];
 
 /** ERP roles may read finance screens; only finance roles may write. */
@@ -153,9 +160,10 @@ export const FINANCE_READ_ROLES: Role[] = [
   "revenue_cycle_officer",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
-export const FINANCE_WRITE_ROLES: Role[] = ["accountant", "finance_officer", "admin"];
+export const FINANCE_WRITE_ROLES: Role[] = ["accountant", "finance_officer", "admin", "super_admin"];
 
 /** Roles that may read payer, authorisation and claim data. */
 export const REVENUE_READ_ROLES: Role[] = [
@@ -165,6 +173,7 @@ export const REVENUE_READ_ROLES: Role[] = [
   "cashier",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
 export const REVENUE_WRITE_ROLES: Role[] = [
@@ -172,6 +181,7 @@ export const REVENUE_WRITE_ROLES: Role[] = [
   "finance_officer",
   "cashier",
   "admin",
+  "super_admin",
 ];
 
 /** Procurement and stock roles may read purchasing documents and inventory reports. */
@@ -184,6 +194,7 @@ export const PROCUREMENT_READ_ROLES: Role[] = [
   "pharmacist",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
 export const PROCUREMENT_WRITE_ROLES: Role[] = [
@@ -191,6 +202,7 @@ export const PROCUREMENT_WRITE_ROLES: Role[] = [
   "store_manager",
   "finance_officer",
   "admin",
+  "super_admin",
 ];
 
 /** Personnel data is restricted: HR maintains it, payroll consumes it, audit reads it. */
@@ -199,18 +211,20 @@ export const HR_READ_ROLES: Role[] = [
   "payroll_officer",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
-export const HR_WRITE_ROLES: Role[] = ["hr_officer", "admin"];
+export const HR_WRITE_ROLES: Role[] = ["hr_officer", "admin", "super_admin"];
 
 export const PAYROLL_READ_ROLES: Role[] = [
   "payroll_officer",
   "hr_officer",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
-export const PAYROLL_WRITE_ROLES: Role[] = ["payroll_officer", "admin"];
+export const PAYROLL_WRITE_ROLES: Role[] = ["payroll_officer", "admin", "super_admin"];
 
 /** Asset registers and maintenance history are visible to finance, audit and assets. */
 export const ASSET_READ_ROLES: Role[] = [
@@ -221,9 +235,10 @@ export const ASSET_READ_ROLES: Role[] = [
   "store_manager",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
-export const ASSET_WRITE_ROLES: Role[] = ["asset_manager", "finance_officer", "admin"];
+export const ASSET_WRITE_ROLES: Role[] = ["asset_manager", "finance_officer", "admin", "super_admin"];
 
 /**
  * Management reports read across finance, revenue, purchasing, stock, payroll
@@ -241,6 +256,7 @@ export const REPORT_READ_ROLES: Role[] = [
   "asset_manager",
   "auditor",
   "admin",
+  "super_admin",
 ];
 
 export const REPORT_WRITE_ROLES: Role[] = REPORT_READ_ROLES;

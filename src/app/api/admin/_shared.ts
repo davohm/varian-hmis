@@ -8,7 +8,7 @@ import { getAdminSections } from "@/server/auth/admin-access";
 import { requireApiFacility, actorFromRequest } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 
-export const ADMIN_ROLES = ["admin"] as const;
+export const ADMIN_ROLES = ["admin", "super_admin"] as const;
 
 export async function requireAdmin() {
   return requireApiFacility([...ADMIN_ROLES]);
@@ -31,9 +31,11 @@ export async function requireAdminSection(section: AdminSection) {
 
 /** Regulatory officers reach only `/admin/regulatory`; administrators keep everything. */
 export async function requireRegulatoryAccess() {
-  const context = await requireApiFacility(["admin", "regulatory_officer"]);
+  const context = await requireApiFacility(["admin", "super_admin", "regulatory_officer"]);
   const isAdmin = context.staff.scopes.some(
-    (scope) => scope.facilityId === context.facilityId && scope.role === "admin",
+    (scope) =>
+      scope.facilityId === context.facilityId &&
+      (scope.role === "admin" || scope.role === "super_admin"),
   );
   const sections = isAdmin
     ? await getAdminSections(context.staff.user.id, context.facilityId)
@@ -46,9 +48,11 @@ export async function requireRegulatoryAccess() {
 
 /** Data protection officers reach only `/admin/privacy`; administrators keep everything. */
 export async function requirePrivacyAccess() {
-  const context = await requireApiFacility(["admin", "dpo"]);
+  const context = await requireApiFacility(["admin", "super_admin", "dpo"]);
   const isAdmin = context.staff.scopes.some(
-    (scope) => scope.facilityId === context.facilityId && scope.role === "admin",
+    (scope) =>
+      scope.facilityId === context.facilityId &&
+      (scope.role === "admin" || scope.role === "super_admin"),
   );
   const sections = isAdmin
     ? await getAdminSections(context.staff.user.id, context.facilityId)

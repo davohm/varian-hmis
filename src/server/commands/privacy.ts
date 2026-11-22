@@ -131,7 +131,9 @@ async function assertActorIsDpoOrAdmin(tx: CommandTransaction, facilityId: strin
     .select({ role: staffRoleScopes.role })
     .from(staffRoleScopes)
     .where(and(eq(staffRoleScopes.userId, userId), eq(staffRoleScopes.facilityId, facilityId)));
-  const ok = rows.some((r) => r.role === "admin" || r.role === "dpo");
+  const ok = rows.some(
+    (r) => r.role === "admin" || r.role === "super_admin" || r.role === "dpo",
+  );
   if (!ok) {
     throw new ForbiddenError("Only a data protection officer or administrator may perform this action");
   }
