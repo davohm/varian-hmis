@@ -47,6 +47,8 @@ import {
   facilitySyncTokens,
   financeApprovalLimits,
   fiscalPeriods,
+  goodsReceiptLines,
+  goodsReceipts,
   integrationSettings,
   invoices,
   itemBatches,
@@ -68,16 +70,24 @@ import {
   payers,
   payments,
   practitionerRegistrations,
+  purchaseOrderLines,
+  purchaseOrders,
+  purchaseRequisitionApprovals,
+  purchaseRequisitionLines,
+  purchaseRequisitions,
   preAuthorizations,
   prescriptions,
   priceLists,
   prices,
   queueEntries,
   remittances,
+  reorderLevels,
   reportCells,
   reportDefinitions,
   reportRuns,
   retentionPolicies,
+  rfqLines,
+  rfqs,
   rooms,
   services,
   session,
@@ -88,6 +98,12 @@ import {
   staffProfiles,
   staffRoleScopes,
   stores,
+  supplierInvoiceLines,
+  supplierInvoices,
+  supplierPayments,
+  supplierQuoteLines,
+  supplierQuotes,
+  suppliers,
   supportServiceLicences,
   syncOutbox,
   syncReceived,
@@ -218,6 +234,28 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(budgetLines).where(eq(budgetLines.facilityId, facilityId));
     await tx.delete(budgets).where(eq(budgets.facilityId, facilityId));
     await tx.delete(financeApprovalLimits).where(eq(financeApprovalLimits.facilityId, facilityId));
+
+    // Procurement documents reference each other, stock batches and journals.
+    // Remove them in reverse creation order before those parents are torn down.
+    await tx.delete(supplierPayments).where(eq(supplierPayments.facilityId, facilityId));
+    await tx.delete(supplierInvoiceLines).where(eq(supplierInvoiceLines.facilityId, facilityId));
+    await tx.delete(supplierInvoices).where(eq(supplierInvoices.facilityId, facilityId));
+    await tx.delete(goodsReceiptLines).where(eq(goodsReceiptLines.facilityId, facilityId));
+    await tx.delete(goodsReceipts).where(eq(goodsReceipts.facilityId, facilityId));
+    await tx.delete(purchaseOrderLines).where(eq(purchaseOrderLines.facilityId, facilityId));
+    await tx.delete(purchaseOrders).where(eq(purchaseOrders.facilityId, facilityId));
+    await tx.delete(supplierQuoteLines).where(eq(supplierQuoteLines.facilityId, facilityId));
+    await tx.delete(supplierQuotes).where(eq(supplierQuotes.facilityId, facilityId));
+    await tx.delete(rfqLines).where(eq(rfqLines.facilityId, facilityId));
+    await tx.delete(rfqs).where(eq(rfqs.facilityId, facilityId));
+    await tx
+      .delete(purchaseRequisitionApprovals)
+      .where(eq(purchaseRequisitionApprovals.facilityId, facilityId));
+    await tx.delete(purchaseRequisitionLines).where(eq(purchaseRequisitionLines.facilityId, facilityId));
+    await tx.delete(purchaseRequisitions).where(eq(purchaseRequisitions.facilityId, facilityId));
+    await tx.delete(reorderLevels).where(eq(reorderLevels.facilityId, facilityId));
+    await tx.delete(suppliers).where(eq(suppliers.facilityId, facilityId));
+
     await tx.delete(fiscalPeriods).where(eq(fiscalPeriods.facilityId, facilityId));
     await tx.delete(costCenters).where(eq(costCenters.facilityId, facilityId));
     await tx.delete(ledgerAccounts).where(eq(ledgerAccounts.facilityId, facilityId));

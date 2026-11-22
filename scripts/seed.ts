@@ -62,6 +62,8 @@ const STAFF_SEEDS: Array<{ role: Role; name: string; email: string; staffNumber:
   { role: "accountant", name: "Accountant", email: "accountant@fam.test", staffNumber: "FAM-F001" },
   { role: "finance_officer", name: "Finance Officer", email: "finance@fam.test", staffNumber: "FAM-F002" },
   { role: "revenue_cycle_officer", name: "Revenue Cycle Officer", email: "revenue@fam.test", staffNumber: "FAM-F003" },
+  { role: "procurement_officer", name: "Procurement Officer", email: "procurement@fam.test", staffNumber: "FAM-PR001" },
+  { role: "store_manager", name: "Store Manager", email: "store@fam.test", staffNumber: "FAM-S001" },
   { role: "auditor", name: "Auditor", email: "auditor@fam.test", staffNumber: "FAM-F004" },
   { role: "admin", name: "System Administrator", email: "admin@fam.test", staffNumber: "FAM-A001" },
 ];

@@ -14,6 +14,12 @@ export type NumberScope =
   | "claim"
   | "preauth"
   | "remittance"
+  | "requisition"
+  | "rfq"
+  | "purchaseOrder"
+  | "goodsReceipt"
+  | "supplierInvoice"
+  | "supplierPayment"
   | "breach";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
@@ -26,6 +32,12 @@ const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   claim: { infix: "C", width: 6 },
   preauth: { infix: "PA", width: 6 },
   remittance: { infix: "RM", width: 6 },
+  requisition: { infix: "RQ", width: 6 },
+  rfq: { infix: "RFQ", width: 5 },
+  purchaseOrder: { infix: "PO", width: 6 },
+  goodsReceipt: { infix: "GRN", width: 5 },
+  supplierInvoice: { infix: "SINV", width: 5 },
+  supplierPayment: { infix: "SPAY", width: 5 },
   breach: { infix: "BR", width: 5 },
 };
 

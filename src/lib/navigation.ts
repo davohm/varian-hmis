@@ -52,6 +52,16 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/finance/revenue",
     description: "Manage payers, pre-authorisation, claims and remittances.",
   },
+  procurement_officer: {
+    label: "Procurement",
+    href: "/procurement",
+    description: "Raise requisitions, compare quotes and manage purchase orders.",
+  },
+  store_manager: {
+    label: "Procurement",
+    href: "/procurement",
+    description: "Receive goods, set reorder levels and review stock valuation.",
+  },
   auditor: {
     label: "Audit",
     href: "/finance",
@@ -88,6 +98,8 @@ export const ROLE_LABELS: Record<Role, string> = {
   accountant: "Accountant",
   finance_officer: "Finance Officer",
   revenue_cycle_officer: "Revenue Cycle Officer",
+  procurement_officer: "Procurement Officer",
+  store_manager: "Store Manager",
   auditor: "Auditor",
   regulatory_officer: "Regulatory Officer",
   dpo: "Data Protection Officer",
@@ -105,6 +117,8 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "accountant",
   "finance_officer",
   "revenue_cycle_officer",
+  "procurement_officer",
+  "store_manager",
   "auditor",
   "regulatory_officer",
   "dpo",
@@ -136,5 +150,24 @@ export const REVENUE_WRITE_ROLES: Role[] = [
   "revenue_cycle_officer",
   "finance_officer",
   "cashier",
+  "admin",
+];
+
+/** Procurement and stock roles may read purchasing documents and inventory reports. */
+export const PROCUREMENT_READ_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "procurement_officer",
+  "store_manager",
+  "pharmacist",
+  "auditor",
+  "admin",
+];
+
+export const PROCUREMENT_WRITE_ROLES: Role[] = [
+  "procurement_officer",
+  "store_manager",
+  "finance_officer",
   "admin",
 ];

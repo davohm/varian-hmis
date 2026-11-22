@@ -50,6 +50,7 @@ import {
 } from "../src/server/sync/outbox";
 import { applyPullRows, readPullRows } from "../src/server/sync/pull";
 import {
+  SYNC_APPEND_ONLY_TABLES,
   SYNC_NO_HARD_DELETE_TABLES,
   SYNC_OUTBOUND_TABLES,
 } from "../src/server/sync/registry";
@@ -909,6 +910,14 @@ describe("sync hardening", () => {
     `);
     const registered = rowsFrom(result).map((row) => String(row.table_name)).sort();
     expect(registered).toEqual([...SYNC_NO_HARD_DELETE_TABLES].sort());
+  });
+
+  it("keeps the append-only registry in sync with SQL sync_tables", async () => {
+    const result = await cloud.db.execute(sql`
+      SELECT table_name FROM sync_tables WHERE append_only = true ORDER BY table_name
+    `);
+    const registered = rowsFrom(result).map((row) => String(row.table_name)).sort();
+    expect(registered).toEqual([...SYNC_APPEND_ONLY_TABLES].sort());
   });
 
   it("does not delete a missing versioned row", async () => {

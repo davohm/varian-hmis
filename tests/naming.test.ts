@@ -20,6 +20,12 @@ describe("numbering", () => {
     expect(formatNumber("FAM", "encounter", 123, date)).toBe("FAM-E-26-000123");
     expect(formatNumber("FAM", "invoice", 123, date)).toBe("FAM-I-26-000123");
     expect(formatNumber("FAM", "receipt", 123, date)).toBe("FAM-R-26-000123");
+    expect(formatNumber("FAM", "requisition", 123, date)).toBe("FAM-RQ-26-000123");
+    expect(formatNumber("FAM", "rfq", 123, date)).toBe("FAM-RFQ-26-00123");
+    expect(formatNumber("FAM", "purchaseOrder", 123, date)).toBe("FAM-PO-26-000123");
+    expect(formatNumber("FAM", "goodsReceipt", 123, date)).toBe("FAM-GRN-26-00123");
+    expect(formatNumber("FAM", "supplierInvoice", 123, date)).toBe("FAM-SINV-26-00123");
+    expect(formatNumber("FAM", "supplierPayment", 123, date)).toBe("FAM-SPAY-26-00123");
   });
 
   it("allocates 50 parallel numbers with no gaps and no duplicates", async () => {

@@ -78,6 +78,23 @@ export const SYNC_OUTBOUND_TABLES = [
   "budgets",
   "budget_lines",
   "finance_approval_limits",
+  // Procurement and inventory
+  "suppliers",
+  "purchase_requisitions",
+  "purchase_requisition_lines",
+  "purchase_requisition_approvals",
+  "rfqs",
+  "rfq_lines",
+  "supplier_quotes",
+  "supplier_quote_lines",
+  "purchase_orders",
+  "purchase_order_lines",
+  "goods_receipts",
+  "goods_receipt_lines",
+  "supplier_invoices",
+  "supplier_invoice_lines",
+  "supplier_payments",
+  "reorder_levels",
   "report_definitions",
   "report_runs",
   "report_cells",
@@ -129,6 +146,7 @@ export const SYNC_APPEND_ONLY_TABLES = [
   "bank_transactions",
   "etims_invoice_lines",
   "etims_transmission_log",
+  "supplier_payments",
 ] as const;
 
 /**
@@ -190,6 +208,22 @@ export const SYNC_NO_HARD_DELETE_TABLES = [
   "death_notifications",
   "notifiable_events",
   "facility_licences",
+  // Procurement document history; use status changes and reversals, not DELETE.
+  "purchase_requisitions",
+  "purchase_requisition_lines",
+  "purchase_requisition_approvals",
+  "rfqs",
+  "rfq_lines",
+  "supplier_quotes",
+  "supplier_quote_lines",
+  "purchase_orders",
+  "purchase_order_lines",
+  "goods_receipts",
+  "goods_receipt_lines",
+  "supplier_invoices",
+  "supplier_invoice_lines",
+  "supplier_payments",
+  "reorder_levels",
 ] as const;
 
 export const SYNC_BUSINESS_KEY_TABLES = {

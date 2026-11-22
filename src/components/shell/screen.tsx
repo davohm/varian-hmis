@@ -187,6 +187,40 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       icon: Receipt,
     },
   ],
+  procurement_officer: [
+    {
+      label: "Requisitions",
+      description: "Raise requests and compare supplier quotes.",
+      icon: ClipboardList,
+    },
+    {
+      label: "Purchase orders",
+      description: "Approve LPOs and follow receipt status.",
+      icon: FileSignature,
+    },
+    {
+      label: "Supplier invoices",
+      description: "Match invoices to orders and received goods.",
+      icon: Receipt,
+    },
+  ],
+  store_manager: [
+    {
+      label: "Goods receipt",
+      description: "Receive orders into stock with batch and expiry details.",
+      icon: Package,
+    },
+    {
+      label: "Reorder levels",
+      description: "Watch items below their minimum quantity.",
+      icon: Boxes,
+    },
+    {
+      label: "Stock valuation",
+      description: "Review on-hand value from the append-only ledger.",
+      icon: Wallet,
+    },
+  ],
   auditor: [
     {
       label: "Ledger review",

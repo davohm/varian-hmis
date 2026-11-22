@@ -52,21 +52,38 @@ export const BUDGET_STATUS_LABELS: Record<BudgetStatus, string> = {
  * postJournal directly and is deliberately not capped here: limits govern a
  * person acting through a manual command.
  */
-export const FINANCE_APPROVAL_ACTIONS = ["postManualJournal", "reverseJournal"] as const;
+export const FINANCE_APPROVAL_ACTIONS = [
+  "postManualJournal",
+  "reverseJournal",
+  "approveRequisition",
+  "approvePurchaseOrder",
+  "recordSupplierPayment",
+] as const;
 export type FinanceApprovalAction = (typeof FINANCE_APPROVAL_ACTIONS)[number];
 
 export const FINANCE_APPROVAL_ACTION_LABELS: Record<FinanceApprovalAction, string> = {
   postManualJournal: "Post manual journal",
   reverseJournal: "Reverse journal",
+  approveRequisition: "Approve requisition",
+  approvePurchaseOrder: "Approve purchase order",
+  recordSupplierPayment: "Record supplier payment",
 };
 
-/** Roles that can hold a finance approval limit. Limits are never defaulted. */
-export const FINANCE_APPROVAL_ROLES = ["accountant", "finance_officer", "admin"] as const;
+/** Roles that can hold a finance or procurement approval limit. Limits are never defaulted. */
+export const FINANCE_APPROVAL_ROLES = [
+  "accountant",
+  "finance_officer",
+  "procurement_officer",
+  "store_manager",
+  "admin",
+] as const;
 export type FinanceApprovalRole = (typeof FINANCE_APPROVAL_ROLES)[number];
 
 export const FINANCE_APPROVAL_ROLE_LABELS: Record<FinanceApprovalRole, string> = {
   accountant: "Accountant",
   finance_officer: "Finance Officer",
+  procurement_officer: "Procurement Officer",
+  store_manager: "Store Manager",
   admin: "Administrator",
 };
 
@@ -264,6 +281,7 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultLedgerAccount[] = [
     type: "asset",
     systemRole: "insurance_receivable",
   },
+  { code: "1300", name: "Inventory", type: "asset", systemRole: "inventory" },
   {
     code: "2000",
     name: "Accounts payable",
