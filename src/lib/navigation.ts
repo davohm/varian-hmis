@@ -72,6 +72,11 @@ export const ROLE_NAV: Record<Role, NavItem> = {
     href: "/payroll",
     description: "Prepare, approve and post payslips and statutory summaries.",
   },
+  asset_manager: {
+    label: "Assets",
+    href: "/assets",
+    description: "Track assets, depreciation, maintenance, valuation and disposal.",
+  },
   auditor: {
     label: "Audit",
     href: "/finance",
@@ -112,6 +117,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   store_manager: "Store Manager",
   hr_officer: "HR Officer",
   payroll_officer: "Payroll Officer",
+  asset_manager: "Asset Manager",
   auditor: "Auditor",
   regulatory_officer: "Regulatory Officer",
   dpo: "Data Protection Officer",
@@ -133,6 +139,7 @@ export const ASSIGNABLE_ROLES: Role[] = [
   "store_manager",
   "hr_officer",
   "payroll_officer",
+  "asset_manager",
   "auditor",
   "regulatory_officer",
   "dpo",
@@ -204,3 +211,16 @@ export const PAYROLL_READ_ROLES: Role[] = [
 ];
 
 export const PAYROLL_WRITE_ROLES: Role[] = ["payroll_officer", "admin"];
+
+/** Asset registers and maintenance history are visible to finance, audit and assets. */
+export const ASSET_READ_ROLES: Role[] = [
+  "asset_manager",
+  "accountant",
+  "finance_officer",
+  "procurement_officer",
+  "store_manager",
+  "auditor",
+  "admin",
+];
+
+export const ASSET_WRITE_ROLES: Role[] = ["asset_manager", "finance_officer", "admin"];

@@ -15,6 +15,7 @@ import {
   Stethoscope,
   Users,
   Wallet,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -38,6 +39,7 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   store_manager: Package,
   hr_officer: Users,
   payroll_officer: Wallet,
+  asset_manager: Wrench,
   auditor: ShieldCheck,
   regulatory_officer: ShieldCheck,
   dpo: ShieldCheck,

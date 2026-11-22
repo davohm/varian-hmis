@@ -107,6 +107,17 @@ export const SYNC_OUTBOUND_TABLES = [
   "payroll_lines",
   "payslips",
   "payroll_run_approvals",
+  // Assets, depreciation, maintenance and disposal history.
+  "assets",
+  "asset_assignments",
+  "depreciation_runs",
+  "depreciation_entries",
+  "depreciation_run_approvals",
+  "maintenance_orders",
+  "maintenance_events",
+  "asset_valuations",
+  "asset_disposals",
+  "asset_approvals",
   "report_definitions",
   "report_runs",
   "report_cells",
@@ -162,6 +173,11 @@ export const SYNC_APPEND_ONLY_TABLES = [
   "payroll_lines",
   "payslips",
   "payroll_run_approvals",
+  "asset_assignments",
+  "depreciation_entries",
+  "depreciation_run_approvals",
+  "maintenance_events",
+  "asset_approvals",
 ] as const;
 
 /**
@@ -251,6 +267,17 @@ export const SYNC_NO_HARD_DELETE_TABLES = [
   "payroll_lines",
   "payslips",
   "payroll_run_approvals",
+  // Asset register and lifecycle history; retire by status, never delete.
+  "assets",
+  "asset_assignments",
+  "depreciation_runs",
+  "depreciation_entries",
+  "depreciation_run_approvals",
+  "maintenance_orders",
+  "maintenance_events",
+  "asset_valuations",
+  "asset_disposals",
+  "asset_approvals",
 ] as const;
 
 export const SYNC_BUSINESS_KEY_TABLES = {

@@ -256,6 +256,23 @@ const WORKSPACE_TASKS: Record<Role, WorkspaceTask[]> = {
       icon: Scale,
     },
   ],
+  asset_manager: [
+    {
+      label: "Asset register",
+      description: "Track custodians, locations and carrying values.",
+      icon: Boxes,
+    },
+    {
+      label: "Depreciation and maintenance",
+      description: "Prepare charges and record maintenance history.",
+      icon: ClipboardCheck,
+    },
+    {
+      label: "Approvals and disposal",
+      description: "Review valuations and disposals before posting.",
+      icon: Scale,
+    },
+  ],
   auditor: [
     {
       label: "Ledger review",

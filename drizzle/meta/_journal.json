@@ -211,6 +211,13 @@
       "when": 1795348868520,
       "tag": "0029_quiet_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795352761690,
+      "tag": "0030_vengeful_terror",
+      "breakpoints": true
     }
   ]
 }

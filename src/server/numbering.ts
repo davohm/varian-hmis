@@ -23,6 +23,11 @@ export type NumberScope =
   | "employee"
   | "payrollRun"
   | "payslip"
+  | "asset"
+  | "depreciationRun"
+  | "maintenanceOrder"
+  | "assetValuation"
+  | "assetDisposal"
   | "breach";
 
 const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
@@ -44,6 +49,11 @@ const scopeFormat: Record<NumberScope, { infix: string; width: number }> = {
   employee: { infix: "EMP", width: 5 },
   payrollRun: { infix: "PAY", width: 6 },
   payslip: { infix: "PSL", width: 6 },
+  asset: { infix: "AST", width: 5 },
+  depreciationRun: { infix: "DEP", width: 5 },
+  maintenanceOrder: { infix: "MO", width: 5 },
+  assetValuation: { infix: "AVL", width: 5 },
+  assetDisposal: { infix: "DSP", width: 5 },
   breach: { infix: "BR", width: 5 },
 };
 

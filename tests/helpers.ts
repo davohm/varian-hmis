@@ -8,6 +8,11 @@ import { createDatabase } from "../src/server/db/client";
 import {
   account,
   adminOverrides,
+  assetApprovals,
+  assetAssignments,
+  assetDisposals,
+  assetValuations,
+  assets,
   adminSectionPermissions,
   auditLog,
   bankAccounts,
@@ -32,6 +37,9 @@ import {
   dataSubjectRequests,
   attendanceRecords,
   deathNotifications,
+  depreciationEntries,
+  depreciationRunApprovals,
+  depreciationRuns,
   departments,
   diagnoses,
   dispenses,
@@ -65,6 +73,8 @@ import {
   ledgerAccounts,
   leaveRequests,
   licenceAlertRules,
+  maintenanceEvents,
+  maintenanceOrders,
   nextOfKin,
   notifiableEvents,
   numberSequences,
@@ -266,6 +276,21 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(purchaseRequisitions).where(eq(purchaseRequisitions.facilityId, facilityId));
     await tx.delete(reorderLevels).where(eq(reorderLevels.facilityId, facilityId));
     await tx.delete(suppliers).where(eq(suppliers.facilityId, facilityId));
+
+    // Asset history is append-only in normal use. Teardown removes dependants
+    // first with ledger_cleanup enabled so facilities can be fully removed.
+    await tx.delete(assetApprovals).where(eq(assetApprovals.facilityId, facilityId));
+    await tx.delete(depreciationRunApprovals).where(
+      eq(depreciationRunApprovals.facilityId, facilityId),
+    );
+    await tx.delete(depreciationEntries).where(eq(depreciationEntries.facilityId, facilityId));
+    await tx.delete(assetAssignments).where(eq(assetAssignments.facilityId, facilityId));
+    await tx.delete(maintenanceEvents).where(eq(maintenanceEvents.facilityId, facilityId));
+    await tx.delete(maintenanceOrders).where(eq(maintenanceOrders.facilityId, facilityId));
+    await tx.delete(assetDisposals).where(eq(assetDisposals.facilityId, facilityId));
+    await tx.delete(assetValuations).where(eq(assetValuations.facilityId, facilityId));
+    await tx.delete(depreciationRuns).where(eq(depreciationRuns.facilityId, facilityId));
+    await tx.delete(assets).where(eq(assets.facilityId, facilityId));
 
     // Payroll evidence and personnel records are append-only in normal use.
     // Test teardown removes dependants first, with ledger_cleanup enabled above.

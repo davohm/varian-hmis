@@ -59,6 +59,9 @@ export const FINANCE_APPROVAL_ACTIONS = [
   "approvePurchaseOrder",
   "recordSupplierPayment",
   "approvePayrollRun",
+  "approveDepreciationRun",
+  "approveAssetValuation",
+  "approveAssetDisposal",
 ] as const;
 export type FinanceApprovalAction = (typeof FINANCE_APPROVAL_ACTIONS)[number];
 
@@ -69,6 +72,9 @@ export const FINANCE_APPROVAL_ACTION_LABELS: Record<FinanceApprovalAction, strin
   approvePurchaseOrder: "Approve purchase order",
   recordSupplierPayment: "Record supplier payment",
   approvePayrollRun: "Approve payroll run",
+  approveDepreciationRun: "Approve depreciation run",
+  approveAssetValuation: "Approve asset valuation",
+  approveAssetDisposal: "Approve asset disposal",
 };
 
 /** Roles that can hold a finance or procurement approval limit. Limits are never defaulted. */
@@ -79,6 +85,7 @@ export const FINANCE_APPROVAL_ROLES = [
   "store_manager",
   "hr_officer",
   "payroll_officer",
+  "asset_manager",
   "admin",
 ] as const;
 export type FinanceApprovalRole = (typeof FINANCE_APPROVAL_ROLES)[number];
@@ -90,6 +97,7 @@ export const FINANCE_APPROVAL_ROLE_LABELS: Record<FinanceApprovalRole, string> =
   store_manager: "Store Manager",
   hr_officer: "HR Officer",
   payroll_officer: "Payroll Officer",
+  asset_manager: "Asset Manager",
   admin: "Administrator",
 };
 
@@ -289,6 +297,12 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultLedgerAccount[] = [
   },
   { code: "1300", name: "Inventory", type: "asset", systemRole: "inventory" },
   {
+    code: "1220",
+    name: "Asset disposal proceeds receivable",
+    type: "asset",
+    systemRole: "asset_proceeds_receivable",
+  },
+  {
     code: "2000",
     name: "Accounts payable",
     type: "liability",
@@ -352,6 +366,39 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultLedgerAccount[] = [
   },
   { code: "5200", name: "Rent", type: "expense", systemRole: null },
   { code: "5300", name: "Utilities", type: "expense", systemRole: null },
+  { code: "1400", name: "Fixed assets", type: "asset", systemRole: "fixed_asset" },
+  {
+    code: "1410",
+    name: "Accumulated depreciation",
+    type: "asset",
+    systemRole: "accumulated_depreciation",
+  },
+  {
+    code: "3120",
+    name: "Asset revaluation reserve",
+    type: "equity",
+    systemRole: "revaluation_reserve",
+  },
+  {
+    code: "5400",
+    name: "Depreciation expense",
+    type: "expense",
+    systemRole: "depreciation_expense",
+  },
+  {
+    code: "5410",
+    name: "Asset impairment expense",
+    type: "expense",
+    systemRole: "impairment_expense",
+  },
+  {
+    code: "5420",
+    name: "Maintenance expense",
+    type: "expense",
+    systemRole: "maintenance_expense",
+  },
+  { code: "6100", name: "Asset disposal gain", type: "revenue", systemRole: "disposal_gain" },
+  { code: "6200", name: "Asset disposal loss", type: "expense", systemRole: "disposal_loss" },
 ];
 
 export const DEFAULT_COST_CENTER = { code: "GEN", name: "General" };

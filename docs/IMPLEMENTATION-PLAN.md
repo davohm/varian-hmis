@@ -1,14 +1,14 @@
 # Varian HMIS — Implementation Plan
 
-Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, and Phase 15 is complete and verified with migration `0029_quiet_meteorite.sql`.
+Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, Phase 15 as `542f7b356d8558a3882de0ef5c23d8c52fbf9752`, and Phase 16 is complete and verified with migration `0030_vengeful_terror.sql` in the current ship commit.
 
 ## Current phase status
 
 | Status | Phases |
 |---|---|
-| Complete | 1–15, 19, 21 |
+| Complete | 1–16, 19, 21 |
 | Partial | 17, 18, 20 |
-| Missing | 16, 22 |
+| Missing | 22 |
 | New / pending | Phase 0 — Initial Configuration |
 
 ### Outstanding work summary
@@ -17,7 +17,7 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - **Phase 13 — Revenue cycle:** complete and deployed as `05360b0932f9f99d5300a628bc6d90b66d5a70fb` — payers, contracts, benefits, pre-authorisations, claims, claim lines, remittances and denials, with command-layer segregation of duties enforced by actor identity. Migration `0026_breezy_korg.sql` has been applied to the local dev database, the local FAM branch database and production Neon; it must be applied to every other target database before the new actor columns are relied on there.
 - **Phase 14 — Procurement and inventory:** complete and verified — suppliers, requisitions with approvals, RFQs and supplier quotes, LPOs, GRNs against the existing append-only stock ledger, supplier invoices with three-way matching, supplier payments, AP/GL postings, reorder alerts and stock valuation. Migrations `0027_mixed_ironclad.sql` and `0028_supplier_payment_append_only.sql` have been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply them before procurement is relied on there.
 - **Phase 15 — HR and payroll:** complete and verified — employee/position/contract, rota, attendance and leave records; rate-driven payroll preparation, SoD approval, finance approval ceiling, GL posting and immutable payslips. Migration `0029_quiet_meteorite.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0029` before these controls are relied on there.
-- **Phase 16 — Assets and maintenance:** not implemented.
+- **Phase 16 — Assets and maintenance:** complete and verified — asset register with append-only custodian/location events, straight-line depreciation with SoD approval and GL posting, maintenance orders with immutable event history and cost postings, revaluation/impairment and disposal workflows with balanced journals, audit/outbox capture and database-level no-hard-delete/append-only guards. Migration `0030_vengeful_terror.sql` has been applied to the local dev database, the local FAM branch database and production Neon; other branch databases must apply migrations `0025`–`0030` before these controls are relied on there.
 - **Phase 17 — ERP reporting and controls:** report catalogue, saved views, exports, approval inbox, drill-down, supplier ageing, stock valuation and payroll summaries are missing.
 - **Phase 18 — Kenya master data / licences / IDs:** implementation exists, but the dedicated 19-rule test suite is missing and the reporting hook depends on Phase 20.
 - **Phase 20 — MOH statutory reporting:** schema and helpers exist, but reporting commands/queries, `/reports` UI, MOH row generators, export/submit/void and drill-down are missing.
@@ -58,6 +58,16 @@ Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `0
 - Payroll rates are read at run time from admin-entered `statutory_rates`; no statutory value is hard-coded. Unset rates compute zero and are carried as `missingRateTypes` warnings through the run, lines and overview. A `test_placeholder_statutory_rate` row is explicitly test-only and is never treated as a statutory rate.
 - Payroll preparation uses active contracts covering the period and gap-free `EMP`, `PAY` and `PSL` numbering. Approval requires a different actor from the preparer and is capped by the `approvePayrollRun` finance approval limit for the approver's server-resolved role. Posting writes one balanced journal using the mapped salary, employer-NSSF and payable accounts, then issues append-only payslip snapshots.
 - Added `tests/hr-payroll.test.ts` covering HR lifecycle and SoD, admin-rate arithmetic, missing-rate warnings, approval ceiling, balanced GL postings, payslips, audit/outbox rows and database protection guards; extended naming and sync-registry coverage. Full suite result is recorded in the ship report.
+
+### Phase 16 progress (complete and verified)
+
+- Added `0030_vengeful_terror.sql` with ten facility-scoped asset tables, UUIDv7 keys, indexes, explicit outbox capture, no-hard-delete triggers on every table and append-only UPDATE/DELETE guards on assignments, depreciation entries/approvals, maintenance events and asset approvals. Existing facilities were backfilled with the missing asset system accounts without overwriting their chart.
+- Added the restricted `asset_manager` role and guarded `/assets` workspace with register, depreciation, maintenance and changes panels. Numbering scopes `AST`, `DEP`, `MO`, `AVL` and `DSP` share the existing gap-free sequence.
+- Asset creation records the first custodian event and mirrors the current custodian/location onto the asset row. Later assignments append immutable events and update only the mirrored current state.
+- Depreciation preparation computes straight-line amounts from cost, residual and accumulated depreciation; approval requires a different actor and is capped by the `approveDepreciationRun` limit for the approver's server-resolved role. Posting writes one balanced depreciation-expense/accumulated-depreciation journal and updates asset carrying values.
+- Maintenance orders move through open, in-progress and completed with immutable event history. Completion posts parts and labour to maintenance expense and cash/bank/AP, returns the asset to service, and refuses a zero-cost order with no payment method.
+- Revaluation, impairment and disposal use dedicated approval records, SoD and finance approval ceilings. Posting writes the required fixed-asset, reserve, impairment, proceeds, gain or loss journals and retires disposed assets without deleting history.
+- Added `tests/assets.test.ts` covering register history and idempotency, depreciation SoD/limits/GL, maintenance lifecycle and GL, revaluation GL, disposal gain GL, and database/sync protection guards. Full suite: 27 files / 319 tests passing.
 
 ## Phase 0 — Initial Configuration (First-Run Setup)
 
