@@ -44,9 +44,14 @@ APP_MODE=cloud npm run provision:branches
 ```
 
 The command is idempotent. It creates `RUA` and `THK` facilities with `write_authority = clinic`,
-their `MAIN` branches, and one sync token per facility/device. On first run it prints each raw
-token **once**; copy them into the matching branch env file immediately. Existing tokens are left
-untouched. To rotate deliberately, set `RUAKA_SYNC_TOKEN` / `THIKA_SYNC_TOKEN` and rerun.
+their `MAIN` branches, their facility-scoped price lists/prices from the HQ catalog, and one sync
+token per facility/device. On first run it prints each raw
+token **once**; copy that token, the matching `facilityId` and the `branchId` into the
+corresponding branch env file immediately. Both local UUIDs must match HQ: the seed script uses
+`SEED_FACILITY_ID` (or `FACILITY_ID` when unset) and `SEED_BRANCH_ID`, and refuses to create
+different IDs for the same facility/branch codes. Existing tokens are left untouched. To rotate
+deliberately, set `RUAKA_SYNC_TOKEN` / `THIKA_SYNC_TOKEN` and rerun. To pin branch IDs on first
+provision, set `RUAKA_BRANCH_ID` / `THIKA_BRANCH_ID` before running the script.
 
 ## 3. Deploy a branch node
 
@@ -54,7 +59,10 @@ Repeat for Ruaka and Thika with the corresponding env file and Compose project n
 
 ```bash
 cp deploy/.env.ruaka.example deploy/.env.ruaka
-# set POSTGRES_PASSWORD, BETTER_AUTH_SECRET, FACILITY_ID, FACILITY_SYNC_TOKEN from step 2
+# set POSTGRES_PASSWORD, BETTER_AUTH_SECRET, and from step 2:
+# FACILITY_ID = HQ facilityId, SEED_FACILITY_ID = the same UUID,
+# SEED_BRANCH_ID = HQ branchId for MAIN,
+# FACILITY_SYNC_TOKEN = that branch's one-time token
 docker compose -p varian-ruaka -f deploy/docker-compose.branch.yml \
   --env-file deploy/.env.ruaka up -d
 
@@ -64,8 +72,12 @@ docker compose -p varian-thika -f deploy/docker-compose.branch.yml \
 ```
 
 The branch app seeds its own facility identity from `SEED_FACILITY_CODE` / `SEED_FACILITY_NAME`
-(`RUA`, `THK`) and starts with `write_authority = clinic`. Caddy serves `https://hmis.local` to
-station computers using an internal CA; install that CA on each station.
+(`RUA`, `THK`) with the UUIDs from `SEED_FACILITY_ID` / `FACILITY_ID` and `SEED_BRANCH_ID`, and
+starts with `write_authority = clinic`. Compose also overrides `SEED_FACILITY_ID` with the
+resolved `FACILITY_ID` so the local facility row and sync worker cannot drift. The branch seed
+does not create global `items`, `lab_tests` or `services`, nor facility `price_lists`/`prices`;
+those arrive on the first sync pull so foreign keys reference the HQ row ids. Caddy serves
+`https://hmis.local` to station computers using an internal CA; install that CA on each station.
 
 ## 4. Verify sync
 

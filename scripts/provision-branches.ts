@@ -17,6 +17,7 @@ import { APP_MODE, DATABASE_URL } from "../src/server/env";
 import { branches, facilities } from "../src/server/db/schema";
 import { facilitySyncTokens } from "../src/server/db/schema/sync";
 import { hashSyncToken } from "../src/server/sync/auth";
+import { upsertFacilityPrices } from "./billing-catalog";
 
 interface BranchSeed {
   code: string;
@@ -24,6 +25,7 @@ interface BranchSeed {
   county: string;
   tokenEnv: string;
   deviceEnv: string;
+  branchIdEnv: string;
 }
 
 const BRANCHES: BranchSeed[] = [
@@ -33,6 +35,7 @@ const BRANCHES: BranchSeed[] = [
     county: "Kiambu",
     tokenEnv: "RUAKA_SYNC_TOKEN",
     deviceEnv: "RUAKA_DEVICE_KEY",
+    branchIdEnv: "RUAKA_BRANCH_ID",
   },
   {
     code: "THK",
@@ -40,12 +43,22 @@ const BRANCHES: BranchSeed[] = [
     county: "Kiambu",
     tokenEnv: "THIKA_SYNC_TOKEN",
     deviceEnv: "THIKA_DEVICE_KEY",
+    branchIdEnv: "THIKA_BRANCH_ID",
   },
 ];
 
 function suppliedToken(name: string): string | null {
   const value = process.env[name]?.trim();
   return value && value.length >= 16 ? value : null;
+}
+
+function suppliedUuid(name: string): string | null {
+  const value = process.env[name]?.trim();
+  if (!value) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error(`${name} is not a valid UUID: ${value}`);
+  }
+  return value;
 }
 
 async function main() {
@@ -99,17 +112,45 @@ async function main() {
       if (!facility[0]) throw new Error(`Could not provision facility ${branch.code}`);
       const facilityId = facility[0].id;
 
-      await db
-        .insert(branches)
-        .values({
-          id: newId(),
-          facilityId,
-          code: "MAIN",
-          name: "Main Branch",
-          isMain: true,
-          createdBy: "provision-branches",
-        })
-        .onConflictDoNothing({ target: [branches.facilityId, branches.code] });
+      const suppliedBranchId = suppliedUuid(branch.branchIdEnv);
+      let branchRow = await db
+        .select({ id: branches.id })
+        .from(branches)
+        .where(and(eq(branches.facilityId, facilityId), eq(branches.code, "MAIN")))
+        .limit(1);
+
+      if (branchRow[0] && suppliedBranchId && branchRow[0].id !== suppliedBranchId) {
+        throw new Error(
+          `${branch.code} MAIN branch already has id ${branchRow[0].id}, which does not match ` +
+            `${branch.branchIdEnv}=${suppliedBranchId}.`,
+        );
+      }
+
+      if (!branchRow[0]) {
+        const insertedBranch = await db
+          .insert(branches)
+          .values({
+            id: suppliedBranchId ?? newId(),
+            facilityId,
+            code: "MAIN",
+            name: "Main Branch",
+            isMain: true,
+            createdBy: "provision-branches",
+          })
+          .onConflictDoNothing({ target: [branches.facilityId, branches.code] })
+          .returning({ id: branches.id });
+        branchRow = insertedBranch.length > 0 ? insertedBranch : await db
+          .select({ id: branches.id })
+          .from(branches)
+          .where(and(eq(branches.facilityId, facilityId), eq(branches.code, "MAIN")))
+          .limit(1);
+      }
+      if (!branchRow[0]) throw new Error(`Could not provision MAIN branch for ${branch.code}`);
+      const branchId = branchRow[0].id;
+
+      // Branch nodes do not seed their own prices: create them here against the
+      // HQ catalog so the first pull has facility-scoped price rows to apply.
+      const billing = await upsertFacilityPrices(db, facilityId);
 
       const deviceKey = process.env[branch.deviceEnv]?.trim() || "clinic-server";
       const existing = await db
@@ -170,9 +211,11 @@ async function main() {
       summary.push({
         code: branch.code,
         facilityId,
+        branchId,
         writeAuthority: "clinic",
         deviceKey,
         tokenStatus,
+        billing,
         ...(rawToken ? { token: rawToken } : {}),
       });
     }
@@ -182,7 +225,7 @@ async function main() {
         {
           hq: { code: "FAM", facilityId: hq[0].id, writeAuthority: "cloud" },
           branches: summary,
-          note: "Copy each generated token into that branch's env file immediately; it is shown once.",
+          note: "Copy each configured/generated token, facilityId and branchId into that branch's env file immediately; a generated token is shown once.",
         },
         null,
         2,

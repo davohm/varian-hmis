@@ -46,6 +46,17 @@ function assertRowBelongsToFacility(row: SyncRow): void {
     return;
   }
 
+  // Migration 0019 registers this table with the business key [facility_id],
+  // so its outbox record_id is the facility UUID rather than the row id.
+  if (row.tableName === "facility_regulatory_profiles") {
+    if (row.recordId !== row.facilityId) {
+      throw new SyncBatchError(
+        `Invalid business key for facility regulatory profile ${row.recordId}`,
+      );
+    }
+    return;
+  }
+
   if (payload.id !== row.recordId) {
     throw new SyncBatchError(`${row.tableName} row id does not match its outbox record id`);
   }

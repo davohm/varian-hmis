@@ -3,7 +3,6 @@ import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { fromCents, toCents } from "../src/lib/billing";
 import { ETIMS_SANDBOX_STUB_URL } from "../src/lib/tax";
 import {
   DEFAULT_CHART_OF_ACCOUNTS,
@@ -16,6 +15,7 @@ import { APP_MODE, DATABASE_URL } from "../src/server/env";
 import { createDatabase } from "../src/server/db/client";
 import { hashSyncToken } from "../src/server/sync/auth";
 import { seedRegulatoryDefaults } from "../src/server/regulatory-seed";
+import { upsertFacilityPrices } from "./billing-catalog";
 import {
   account,
   branches,
@@ -29,8 +29,6 @@ import {
   items,
   labTests,
   ledgerAccounts,
-  priceLists,
-  prices,
   services,
   staffProfiles,
   staffRoleScopes,
@@ -50,6 +48,33 @@ const FACILITY_NAME = process.env.SEED_FACILITY_NAME?.trim() || "Family Afya Mod
 const BRANCH_CODE = process.env.SEED_BRANCH_CODE?.trim().toUpperCase() || "MAIN";
 const BRANCH_NAME = process.env.SEED_BRANCH_NAME?.trim() || "Main Branch";
 const FACILITY_COUNTY = process.env.SEED_COUNTY?.trim() || "Nairobi";
+
+// A branch must seed the exact facility UUID provisioned on HQ. FACILITY_ID is
+// already required for clinic sync, so it is the safe default; SEED_FACILITY_ID
+// is available when seeding is bootstrapped before the sync env is wired.
+const configuredFacilityId =
+  process.env.SEED_FACILITY_ID?.trim() || process.env.FACILITY_ID?.trim() || null;
+if (configuredFacilityId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredFacilityId)) {
+  throw new Error(`SEED_FACILITY_ID/FACILITY_ID is not a valid UUID: ${configuredFacilityId}`);
+}
+const SEED_FACILITY_ID: string | null = configuredFacilityId;
+
+// HQ provisioning also creates the MAIN branch row. A branch node must reuse
+// that UUID; otherwise the first sync collides with the HQ business key
+// (facility_id, code) and the batch is rejected.
+const configuredBranchId = process.env.SEED_BRANCH_ID?.trim() || null;
+if (configuredBranchId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredBranchId)) {
+  throw new Error(`SEED_BRANCH_ID is not a valid UUID: ${configuredBranchId}`);
+}
+const SEED_BRANCH_ID: string | null = configuredBranchId;
+
+// A branch node is a clinic database with HQ-provisioned facility and branch
+// UUIDs. Its global catalogue and facility prices are pulled from HQ; seeding
+// local copies would create global rows that never sync and prices pointing at
+// service/item ids that do not exist on HQ.
+const IS_HQ_BRANCH_NODE =
+  APP_MODE === "clinic" && Boolean(SEED_FACILITY_ID && SEED_BRANCH_ID);
+
 const STAFF_PASSWORD = "VarianHMIS2026!";
 
 const STAFF_SEEDS: Array<{ role: Role; name: string; email: string; staffNumber: string }> = [
@@ -373,17 +398,6 @@ async function upsertDrugs(db: ReturnType<typeof createDatabase>["db"]) {
 /* Billing catalogue                                                   */
 /* ------------------------------------------------------------------ */
 
-type SeedPayerType = "cash" | "sha" | "insurance";
-
-const PAYER_TYPES: SeedPayerType[] = ["cash", "sha", "insurance"];
-
-/** Negotiated lists sit above the cash counter price by payer. */
-const PAYER_MARKUP: Record<SeedPayerType, number> = {
-  cash: 1,
-  sha: 1.1,
-  insurance: 1.25,
-};
-
 interface ServiceSeed {
   code: string;
   name: string;
@@ -412,58 +426,9 @@ const LAB_PRICES: Record<string, string> = {
   WIDAL: "600.00",
 };
 
-/** Cash price per dispensing unit, keyed by the item code. */
-const DRUG_PRICES: Record<string, string> = {
-  PARA500: "2.00",
-  PARA120: "150.00",
-  IBU400: "3.00",
-  DICLO50: "3.00",
-  AMOX500: "5.00",
-  AMOXCLAV625: "25.00",
-  AZITH500: "30.00",
-  CIPRO500: "8.00",
-  METRO400: "3.00",
-  COTRIM960: "3.00",
-  DOXY100: "4.00",
-  CETIR10: "2.00",
-  LORA10: "2.00",
-  OMEP20: "5.00",
-  RANT150: "3.00",
-  METFORMIN500: "3.00",
-  GLIB5: "3.00",
-  AMLOD5: "4.00",
-  LISIN10: "4.00",
-  HCTZ25: "3.00",
-  ATEN50: "3.00",
-  SALB100: "450.00",
-  PRED5: "3.00",
-  ARTEM20: "10.00",
-  QUIN300: "8.00",
-  ORS: "50.00",
-  ZINC20: "3.00",
-  FERR200: "3.00",
-  FOLIC5: "2.00",
-  VITC100: "2.00",
-  HYDRO25: "120.00",
-  CLOTRI1: "120.00",
-  GENTA01: "150.00",
-  NSALINE: "120.00",
-  RINGER: "140.00",
-  TRAMA50: "6.00",
-  DIAZ5: "3.00",
-  AMIT25: "3.00",
-  FLUOX20: "6.00",
-  CARBAM200: "5.00",
-};
-
-function payerPrice(base: string, payer: SeedPayerType): string {
-  return fromCents(Math.round(toCents(base) * PAYER_MARKUP[payer]));
-}
-
 /**
- * Services, one price list per payer and a price for every service and
- * medicine. Shared service rows are reused, existing prices are never
- * overwritten (a negotiated price outlives a re-seed).
+ * Seed the shared services once, then create this facility's price lists and
+ * prices from the HQ catalog. Existing prices are never overwritten.
  */
 async function upsertBillingCatalog(
   db: ReturnType<typeof createDatabase>["db"],
@@ -501,93 +466,7 @@ async function upsertBillingCatalog(
     );
   }
 
-  const serviceRows = await db
-    .select({ id: services.id, code: services.code, defaultPrice: services.defaultPrice })
-    .from(services)
-    .where(and(isNull(services.facilityId), inArray(services.code, serviceCodes)));
-
-  const priceListIds = new Map<SeedPayerType, string>();
-  for (const payer of PAYER_TYPES) {
-    const [row] = await db
-      .insert(priceLists)
-      .values({
-        id: newId(),
-        facilityId,
-        name: `${payer === "cash" ? "Cash" : payer === "sha" ? "SHA" : "Insurance"} price list`,
-        payerType: payer,
-        createdBy: "seed",
-      })
-      .onConflictDoUpdate({
-        target: [priceLists.facilityId, priceLists.payerType],
-        set: { active: true, updatedAt: new Date() },
-      })
-      .returning({ id: priceLists.id });
-    priceListIds.set(payer, row.id);
-  }
-
-  const itemRows = await db
-    .select({ id: items.id, code: items.code })
-    .from(items)
-    .where(inArray(items.code, DRUG_SEEDS.map((drug) => drug.code)));
-
-  const existingPrices = await db
-    .select({ priceListId: prices.priceListId, serviceId: prices.serviceId, itemId: prices.itemId })
-    .from(prices)
-    .where(eq(prices.facilityId, facilityId));
-  const knownPrices = new Set(
-    existingPrices.map((row) => `${row.priceListId}:${row.serviceId ?? row.itemId}`),
-  );
-
-  const pending: Array<{
-    id: string;
-    facilityId: string;
-    priceListId: string;
-    serviceId: string | null;
-    itemId: string | null;
-    amount: string;
-    createdBy: string;
-  }> = [];
-
-  for (const payer of PAYER_TYPES) {
-    const priceListId = priceListIds.get(payer);
-    if (!priceListId) continue;
-
-    for (const service of serviceRows) {
-      if (knownPrices.has(`${priceListId}:${service.id}`)) continue;
-      pending.push({
-        id: newId(),
-        facilityId,
-        priceListId,
-        serviceId: service.id,
-        itemId: null,
-        amount: payerPrice(service.defaultPrice, payer),
-        createdBy: "seed",
-      });
-    }
-
-    for (const item of itemRows) {
-      if (knownPrices.has(`${priceListId}:${item.id}`)) continue;
-      pending.push({
-        id: newId(),
-        facilityId,
-        priceListId,
-        serviceId: null,
-        itemId: item.id,
-        amount: payerPrice(DRUG_PRICES[item.code] ?? "5.00", payer),
-        createdBy: "seed",
-      });
-    }
-  }
-
-  for (let index = 0; index < pending.length; index += 200) {
-    await db.insert(prices).values(pending.slice(index, index + 200));
-  }
-
-  return {
-    services: serviceRows.length,
-    priceLists: priceListIds.size,
-    prices: pending.length,
-  };
+  return upsertFacilityPrices(db, facilityId);
 }
 
 function addDaysIso(days: number): string {
@@ -688,12 +567,35 @@ async function upsertFacility(db: ReturnType<typeof createDatabase>["db"]) {
     .where(eq(facilities.code, FACILITY_CODE))
     .limit(1);
 
-  if (existing[0]) return existing[0];
+  if (existing[0]) {
+    if (SEED_FACILITY_ID && existing[0].id !== SEED_FACILITY_ID) {
+      throw new Error(
+        `Local facility ${FACILITY_CODE} has id ${existing[0].id}, but sync is configured for ` +
+          `${SEED_FACILITY_ID}. Re-seed a fresh branch database or set ` +
+          `SEED_FACILITY_ID/FACILITY_ID to the HQ-provisioned facility id.`,
+      );
+    }
+    return existing[0];
+  }
+
+  if (SEED_FACILITY_ID) {
+    const byId = await db
+      .select({ code: facilities.code })
+      .from(facilities)
+      .where(eq(facilities.id, SEED_FACILITY_ID))
+      .limit(1);
+    if (byId[0]) {
+      throw new Error(
+        `Facility id ${SEED_FACILITY_ID} already belongs to ${byId[0].code}; ` +
+          `refusing to seed ${FACILITY_CODE} with a duplicate id.`,
+      );
+    }
+  }
 
   const inserted = await db
     .insert(facilities)
     .values({
-      id: newId(),
+      id: SEED_FACILITY_ID ?? newId(),
       code: FACILITY_CODE,
       name: FACILITY_NAME,
       county: FACILITY_COUNTY,
@@ -712,6 +614,11 @@ async function upsertFacility(db: ReturnType<typeof createDatabase>["db"]) {
     .where(eq(facilities.code, FACILITY_CODE))
     .limit(1);
   if (!raced[0]) throw new Error("Facility seed failed");
+  if (SEED_FACILITY_ID && raced[0].id !== SEED_FACILITY_ID) {
+    throw new Error(
+      `Facility ${FACILITY_CODE} was created with id ${raced[0].id}, expected ${SEED_FACILITY_ID}.`,
+    );
+  }
   return raced[0];
 }
 
@@ -765,12 +672,36 @@ async function upsertBranch(db: ReturnType<typeof createDatabase>["db"], facilit
     .from(branches)
     .where(eq(branches.facilityId, facilityId))
     .limit(1);
-  if (existing[0]) return existing[0];
+
+  if (existing[0]) {
+    if (SEED_BRANCH_ID && existing[0].id !== SEED_BRANCH_ID) {
+      throw new Error(
+        `Local branch ${BRANCH_CODE} has id ${existing[0].id}, but HQ provisioned ` +
+          `${SEED_BRANCH_ID}. Re-seed a fresh branch database or set SEED_BRANCH_ID to the ` +
+          `branchId printed by provision:branches.`,
+      );
+    }
+    return existing[0];
+  }
+
+  if (SEED_BRANCH_ID) {
+    const byId = await db
+      .select({ facilityId: branches.facilityId })
+      .from(branches)
+      .where(eq(branches.id, SEED_BRANCH_ID))
+      .limit(1);
+    if (byId[0]) {
+      throw new Error(
+        `Branch id ${SEED_BRANCH_ID} already belongs to facility ${byId[0].facilityId}; ` +
+          `refusing to seed a duplicate id.`,
+      );
+    }
+  }
 
   const inserted = await db
     .insert(branches)
     .values({
-      id: newId(),
+      id: SEED_BRANCH_ID ?? newId(),
       facilityId,
       code: BRANCH_CODE,
       name: BRANCH_NAME,
@@ -788,6 +719,11 @@ async function upsertBranch(db: ReturnType<typeof createDatabase>["db"], facilit
     .where(eq(branches.facilityId, facilityId))
     .limit(1);
   if (!raced[0]) throw new Error("Branch seed failed");
+  if (SEED_BRANCH_ID && raced[0].id !== SEED_BRANCH_ID) {
+    throw new Error(
+      `Branch ${BRANCH_CODE} was created with id ${raced[0].id}, expected ${SEED_BRANCH_ID}.`,
+    );
+  }
   return raced[0];
 }
 
@@ -1055,9 +991,15 @@ async function seed() {
     }
 
     const icd10 = await upsertIcd10(db);
-    const labCatalog = await upsertLabTests(db);
-    const drugCatalog = await upsertDrugs(db);
-    const billing = await upsertBillingCatalog(db, facility.id);
+    const labCatalog = IS_HQ_BRANCH_NODE
+      ? { total: 0, inserted: 0, source: "HQ sync pull" }
+      : await upsertLabTests(db);
+    const drugCatalog = IS_HQ_BRANCH_NODE
+      ? { total: 0, inserted: 0, source: "HQ sync pull" }
+      : await upsertDrugs(db);
+    const billing = IS_HQ_BRANCH_NODE
+      ? { services: 0, priceLists: 0, prices: 0, source: "HQ sync pull" }
+      : await upsertBillingCatalog(db, facility.id);
 
     const storeSeeds = [
       { name: "Pharmacy", kind: "pharmacy" as const },

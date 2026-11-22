@@ -36,6 +36,9 @@ services:
       APP_MODE: clinic
       SYNC_ENABLED: "true"
       DATABASE_URL: postgresql://${POSTGRES_USER:-varian}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-varian-hmis}
+      # Keep the seeded local facility id identical to the sync worker identity,
+      # even if SEED_FACILITY_ID in the env file was missed or edited separately.
+      SEED_FACILITY_ID: ${FACILITY_ID}
     command: sh -c "npm run db:migrate && npm run db:seed && npm start"
     depends_on:
       postgres:

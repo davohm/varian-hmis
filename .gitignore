@@ -32,9 +32,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (commit only the placeholder template)
+# env files (commit only the placeholder templates)
 .env*
 !.env.example
+!/deploy/.env.hq.example
+!/deploy/.env.ruaka.example
+!/deploy/.env.thika.example
+
+# deployment secrets (templates are committed explicitly)
+/deploy/cloudflared/config.yml
+/deploy/cloudflared/*.json
 
 # vercel
 .vercel
