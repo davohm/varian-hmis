@@ -7,8 +7,8 @@ import { apiErrorResponse } from "@/server/auth/api-error";
 import { requireApiFacility } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 import { db } from "@/server/db/client";
-import { archiveReportView, generateErpReport, markReportExported, saveReportView } from "@/server/commands/reporting";
-import { getApprovalInbox, getErpReportData, getReportDrillDown, listReportCatalogue, listSavedReportViews } from "@/server/queries/reporting";
+import { archiveReportView, createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateErpReport, generateReportRun, markReportExported, regenerateReportRun, saveReportView, submitNotifiableEvent, submitReportRun, voidReportRun } from "@/server/commands/reporting";
+import { getApprovalInbox, getErpReportData, getReportDrillDown, getReportCells, getReportRunAuditTrail, listReportCatalogue, listReportRuns, listSavedReportViews } from "@/server/queries/reporting";
 import { handleErpCommand } from "./_shared";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,15 @@ const commands = {
   saveReportView,
   archiveReportView,
   markReportExported,
+  generateReportRun,
+  regenerateReportRun,
+  exportReportRun,
+  submitReportRun,
+  voidReportRun,
+  createNotifiableEvent,
+  submitNotifiableEvent,
+  createBirthNotification,
+  createDeathNotification,
 } as const;
 
 function stringParam(value: string | null): string | undefined {
@@ -44,12 +53,16 @@ export async function GET(request: NextRequest) {
       branchId: stringParam(params.get("branchId")),
     };
 
-    const [catalogue, savedViews, approvalInbox, reportData, drillDown] = await Promise.all([
+    const runId = stringParam(params.get("runId"));
+    const [catalogue, savedViews, approvalInbox, reportData, drillDown, mohRuns, mohCells, mohAuditTrail] = await Promise.all([
       listReportCatalogue(db),
       listSavedReportViews(db, facilityId, staff.user.id, reportCode),
       getApprovalInbox(db, facilityId),
       reportCode ? getErpReportData(db, facilityId, reportCode, filters) : Promise.resolve(null),
       sourceType && sourceId ? getReportDrillDown(db, facilityId, sourceType, sourceId) : Promise.resolve(null),
+      listReportRuns(db, facilityId, { reportCode: reportCodeParam, limit: 50 }),
+      runId ? getReportCells(db, facilityId, runId) : Promise.resolve([]),
+      runId ? getReportRunAuditTrail(db, facilityId, runId) : Promise.resolve([]),
     ]);
 
     return NextResponse.json({
@@ -58,6 +71,9 @@ export async function GET(request: NextRequest) {
       approvalInbox,
       reportData,
       drillDown,
+      mohRuns,
+      mohCells,
+      mohAuditTrail,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {

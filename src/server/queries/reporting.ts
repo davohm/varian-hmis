@@ -14,9 +14,10 @@ import {
 } from "@/lib/erp-reporting";
 import {
   ERP_REPORT_CODES,
-  type ErpReportCode,
   PROMPT17_ERP_REPORTS,
+  PROMPT20_REPORTS,
   computeReportChecksum,
+  type ErpReportCode,
 } from "@/lib/reporting";
 import type { db } from "@/server/db/client";
 import {
@@ -29,6 +30,7 @@ import {
   journalEntries,
   journalLines,
   ledgerAccounts,
+  notifiableEvents,
   payrollRuns,
   purchaseOrders,
   purchaseRequisitions,
@@ -111,6 +113,7 @@ export async function listReportCatalogue(
   database: ReportingDatabase,
 ): Promise<ReportCatalogueRow[]> {
   await ensureErpCatalogue(database);
+  await ensureMohCatalogueRows(database);
   const rows = await database
     .select({
       reportCode: reportCatalogue.reportCode,
@@ -123,8 +126,7 @@ export async function listReportCatalogue(
       enabled: reportCatalogue.enabled,
     })
     .from(reportCatalogue)
-    .where(inArray(reportCatalogue.reportCode, [...ERP_REPORT_CODES]))
-    .orderBy(asc(reportCatalogue.name));
+    .orderBy(asc(reportCatalogue.domain), asc(reportCatalogue.name));
 
   return rows.map((row) => ({ ...row, outputFormats: row.outputFormats ?? [] }));
 }
@@ -1076,4 +1078,64 @@ export async function getReportRun(
     generatedAt: asIso(run.generatedAt),
     cells,
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 20 â€” MOH statutory reporting queries
+// ---------------------------------------------------------------------------
+
+async function ensureMohCatalogueRows(database: ReportingDatabase) {
+  await database.insert(reportCatalogue).values(PROMPT20_REPORTS.map((r) => ({
+    reportCode: r.reportCode, name: r.name, domain: r.domain, schedule: r.schedule, periodType: r.periodType,
+    sourceEntities: [...r.sourceEntities], outputFormats: [...r.outputFormats], authority: r.authority ?? null, enabled: true, templateVersion: r.templateVersion ?? null,
+  }))).onConflictDoUpdate({ target: reportCatalogue.reportCode, set: { name: sql`excluded.name`, domain: sql`excluded.domain`, schedule: sql`excluded.schedule`, periodType: sql`excluded.period_type`, sourceEntities: sql`excluded.source_entities`, outputFormats: sql`excluded.output_formats`, authority: sql`excluded.authority`, enabled: sql`excluded.enabled`, templateVersion: sql`excluded.template_version`, updatedAt: sql`now()` } });
+}
+
+export async function getReportCatalogue(database: ReportingDatabase) {
+  await ensureErpCatalogue(database);
+  await ensureMohCatalogueRows(database);
+  return database.select({ id: reportCatalogue.id, reportCode: reportCatalogue.reportCode, name: reportCatalogue.name, domain: reportCatalogue.domain, schedule: reportCatalogue.schedule, periodType: reportCatalogue.periodType, authority: reportCatalogue.authority, outputFormats: reportCatalogue.outputFormats, enabled: reportCatalogue.enabled, templateVersion: reportCatalogue.templateVersion }).from(reportCatalogue).orderBy(asc(reportCatalogue.domain), asc(reportCatalogue.reportCode));
+}
+
+export async function listReportRuns(database: ReportingDatabase, facilityId: string, options: { reportCode?: string; branchId?: string; status?: string; limit?: number } = {}) {
+  const conditions = [eq(reportRuns.facilityId, facilityId)];
+  if (options.branchId) conditions.push(eq(reportRuns.branchId, options.branchId));
+  if (options.status) conditions.push(eq(reportRuns.status, options.status));
+  const rows = await database.select({
+    id: reportRuns.id, reportCode: reportCatalogue.reportCode, reportName: reportCatalogue.name, branchId: reportRuns.branchId,
+    periodStart: reportRuns.periodStart, periodEnd: reportRuns.periodEnd, epiWeek: reportRuns.epiWeek, epiYear: reportRuns.epiYear,
+    month: reportRuns.month, year: reportRuns.year, status: reportRuns.status, rowCount: reportRuns.rowCount, checksum: reportRuns.checksum,
+    generatedBy: reportRuns.generatedBy, generatedAt: reportRuns.generatedAt, submittedAt: reportRuns.submittedAt, submittedBy: reportRuns.submittedBy,
+    acknowledgementRef: reportRuns.acknowledgementRef, exportedFile: reportRuns.exportedFile, voidedAt: reportRuns.voidedAt, voidReason: reportRuns.voidReason,
+  }).from(reportRuns).innerJoin(reportCatalogue, eq(reportCatalogue.id, reportRuns.reportId)).where(and(...conditions, ...(options.reportCode ? [eq(reportCatalogue.reportCode, options.reportCode)] : []))).orderBy(desc(reportRuns.generatedAt)).limit(options.limit ?? 100);
+  return rows.map((r) => ({ ...r, generatedAt: asIso(r.generatedAt), submittedAt: asIso(r.submittedAt), voidedAt: asIso(r.voidedAt) }));
+}
+
+export async function getReportCells(database: ReportingDatabase, facilityId: string, runId: string) {
+  return database.select().from(reportCells).where(and(eq(reportCells.facilityId, facilityId), eq(reportCells.reportRunId, runId))).orderBy(asc(reportCells.sortOrder));
+}
+
+export async function drillDownReportCell(database: ReportingDatabase, facilityId: string, runId: string, rowCode: string, colKey: string) {
+  const [cell] = await database.select().from(reportCells).where(and(eq(reportCells.facilityId, facilityId), eq(reportCells.reportRunId, runId), eq(reportCells.rowCode, rowCode), eq(reportCells.colKey, colKey))).limit(1);
+  if (!cell) return null;
+  return { cell, sourceQuery: cell.sourceQuery, note: "Source query is recorded at generation time; execute in a controlled reporting context for row-level evidence." };
+}
+
+export async function listNotifiableEvents(database: ReportingDatabase, facilityId: string, options: { status?: string; limit?: number } = {}) {
+  const conditions = [eq(notifiableEvents.facilityId, facilityId)];
+  if (options.status) conditions.push(eq(notifiableEvents.status, options.status));
+  const rows = await database.select().from(notifiableEvents).where(and(...conditions)).orderBy(desc(notifiableEvents.detectedAt)).limit(options.limit ?? 100);
+  return rows.map((r) => ({ ...r, detectedAt: asIso(r.detectedAt), reportedAt: asIso(r.reportedAt), createdAt: asIso(r.createdAt), updatedAt: asIso(r.updatedAt) }));
+}
+
+export async function listOverdueNotifiableEvents(database: ReportingDatabase, facilityId: string, now = new Date()) {
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const rows = await database.select().from(notifiableEvents).where(and(eq(notifiableEvents.facilityId, facilityId), eq(notifiableEvents.status, "draft"), lte(notifiableEvents.detectedAt, cutoff))).orderBy(asc(notifiableEvents.detectedAt));
+  return rows.map((r) => ({ ...r, detectedAt: asIso(r.detectedAt), reportedAt: asIso(r.reportedAt) }));
+}
+
+export async function getReportRunAuditTrail(database: ReportingDatabase, facilityId: string, runId: string) {
+  const rows = await database.select({ id: auditLog.id, action: auditLog.action, entity: auditLog.entity, entityId: auditLog.entityId, createdAt: auditLog.createdAt, actorId: auditLog.userId, details: auditLog.details }).from(auditLog).where(and(eq(auditLog.facilityId, facilityId), eq(auditLog.entity, "report_run"), eq(auditLog.entityId, runId))).orderBy(desc(auditLog.createdAt));
+  return rows.map((r) => ({ ...r, createdAt: asIso(r.createdAt) ?? "" }));
 }

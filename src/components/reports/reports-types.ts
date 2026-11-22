@@ -4,10 +4,8 @@ import type {
   ReportDrillDownData,
   SavedReportViewRow,
 } from "@/lib/erp-reporting";
-import type { ErpReportCode } from "@/lib/reporting";
-
 export interface ReportCatalogueRow {
-  reportCode: ErpReportCode;
+  reportCode: string;
   name: string;
   domain: string;
   schedule: string;

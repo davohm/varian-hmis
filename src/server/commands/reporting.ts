@@ -2,11 +2,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { defaultReportFilters } from "@/lib/erp-reporting";
-import { ERP_REPORT_CODES, type ErpReportCode } from "@/lib/reporting";
+import { ERP_REPORT_CODES, PROMPT20_REPORTS, getEpiWeek, getMonthPeriod, isFutureDate, periodOverlapsClosedFiscalPeriod, toIsoDate, type ErpReportCode } from "@/lib/reporting";
+import { MOH_REPORT_CODES, isMohReportCode, type MohReportCode } from "@/lib/moh-reporting";
+import { generateMohReport, mohChecksum } from "@/server/reporting/moh";
 import { recordAudit } from "@/server/audit";
-import { reportCatalogue, reportCells, reportRuns, reportSavedViews } from "@/server/db/schema";
+import { db } from "@/server/db/client";
+import { birthNotifications, deathNotifications, fiscalPeriods, notifiableEvents, reportCatalogue, reportCells, reportRuns, reportSavedViews } from "@/server/db/schema";
 import { publishEvent } from "@/server/events";
 import { asExecutor, runCommand, type CommandOptions, type CommandTransaction } from "@/server/commands/run";
+import { assertFacilityReady } from "@/server/commands/regulatory";
 import {
   getErpReportData,
   reportChecksum,
@@ -322,4 +326,217 @@ export async function exportReportRunCsv(
 ) {
   const data = await getErpReportData(database, facilityId, reportCode, filters);
   return { filename: `${reportCode}-${data.to}.csv`, data };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 20 â€” MOH statutory reporting
+// ---------------------------------------------------------------------------
+
+async function ensureMohCatalogue(tx: CommandTransaction) {
+  await tx
+    .insert(reportCatalogue)
+    .values(PROMPT20_REPORTS.map((r) => ({
+      reportCode: r.reportCode,
+      name: r.name,
+      domain: r.domain,
+      schedule: r.schedule,
+      periodType: r.periodType,
+      sourceEntities: [...r.sourceEntities],
+      outputFormats: [...r.outputFormats],
+      authority: r.authority ?? null,
+      enabled: true,
+      templateVersion: r.templateVersion ?? null,
+    })))
+    .onConflictDoUpdate({
+      target: reportCatalogue.reportCode,
+      set: { name: sql`excluded.name`, domain: sql`excluded.domain`, schedule: sql`excluded.schedule`, periodType: sql`excluded.period_type`, sourceEntities: sql`excluded.source_entities`, outputFormats: sql`excluded.output_formats`, authority: sql`excluded.authority`, enabled: sql`excluded.enabled`, templateVersion: sql`excluded.template_version`, updatedAt: sql`now()` },
+    });
+}
+
+async function getMohCatalogueRow(tx: CommandTransaction, reportCode: MohReportCode) {
+  await ensureMohCatalogue(tx);
+  const [row] = await tx.select().from(reportCatalogue).where(eq(reportCatalogue.reportCode, reportCode)).limit(1);
+  if (!row) throw new Error(`Report catalogue entry missing for ${reportCode}`);
+  return row;
+}
+
+async function assertPeriodNotClosed(tx: CommandTransaction, facilityId: string, periodStart: string, periodEnd: string) {
+  const closed = await tx.select({ startDate: fiscalPeriods.startDate, endDate: fiscalPeriods.endDate }).from(fiscalPeriods).where(and(eq(fiscalPeriods.facilityId, facilityId), eq(fiscalPeriods.status, "closed")));
+  if (periodOverlapsClosedFiscalPeriod(periodStart, periodEnd, closed.map((p) => ({ startDate: String(p.startDate), endDate: String(p.endDate) })))) {
+    throw new Error("A report cannot be generated for a period in a closed fiscal period");
+  }
+}
+
+function resolveMohPeriod(input: { reportCode: MohReportCode; periodStart?: string; periodEnd?: string; month?: number; year?: number; epiWeek?: number; epiYear?: number; today?: string }) {
+  const today = input.today ?? toIsoDate(new Date());
+  if (input.reportCode === "MOH505") {
+    let info = input.periodEnd ? getEpiWeek(input.periodEnd) : getEpiWeek(today);
+    if (input.epiWeek && input.epiYear) {
+      const jan4 = new Date(Date.UTC(input.epiYear, 0, 4));
+      const dayNr = (jan4.getUTCDay() + 6) % 7;
+      jan4.setUTCDate(jan4.getUTCDate() - dayNr + 3 + (input.epiWeek - 1) * 7);
+      info = getEpiWeek(toIsoDate(jan4));
+    }
+    return { periodStart: info.weekStart, periodEnd: info.weekEnding, epiWeek: info.epiWeek, epiYear: info.epiYear, month: null as number | null, year: info.epiYear };
+  }
+  const year = input.year ?? (input.periodStart ? Number(input.periodStart.slice(0, 4)) : Number(today.slice(0, 4)));
+  const month = input.month ?? (input.periodStart ? Number(input.periodStart.slice(5, 7)) : Number(today.slice(5, 7)));
+  const mp = getMonthPeriod(year, month);
+  return { periodStart: mp.periodStart, periodEnd: mp.periodEnd, epiWeek: null as number | null, epiYear: null as number | null, month: mp.month, year: mp.year };
+}
+
+const baseActor = z.object({ userId: z.string().min(1), ip: z.string().optional().nullable(), deviceId: z.string().optional().nullable() });
+
+export const generateReportRunSchema = z.object({
+  facilityId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
+  actor: baseActor,
+  reportCode: z.enum(MOH_REPORT_CODES),
+  branchId: z.string().uuid().nullable().optional(),
+  month: z.number().int().min(1).max(12).optional(),
+  year: z.number().int().min(2000).max(2200).optional(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  epiWeek: z.number().int().min(1).max(53).optional(),
+  epiYear: z.number().int().min(2000).max(2200).optional(),
+  today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+export async function generateReportRun(input: z.input<typeof generateReportRunSchema>, options: CommandOptions = {}) {
+  const values = generateReportRunSchema.parse(input);
+  await assertFacilityReady({ facilityId: values.facilityId, action: "reporting", actor: { userId: values.actor.userId, deviceId: values.actor.deviceId ?? undefined, ip: values.actor.ip ?? undefined }, today: values.today }, { database: options.database ?? db });
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "generateReportRun", async (tx) => {
+    const catalogue = await getMohCatalogueRow(tx, values.reportCode);
+    if (!catalogue.enabled) throw new Error("This report is not enabled");
+    const period = resolveMohPeriod(values);
+    const today = values.today ?? toIsoDate(new Date());
+    if (isFutureDate(period.periodEnd, today)) throw new Error("A report cannot be generated for a future period");
+    await assertPeriodNotClosed(tx, values.facilityId, period.periodStart, period.periodEnd);
+
+    const existing = await tx.select().from(reportRuns).where(and(eq(reportRuns.facilityId, values.facilityId), eq(reportRuns.reportId, catalogue.id), values.branchId ? eq(reportRuns.branchId, values.branchId) : sql`${reportRuns.branchId} is null`, eq(reportRuns.periodStart, period.periodStart), eq(reportRuns.periodEnd, period.periodEnd), sql`${reportRuns.status} != 'void'`)).limit(1);
+    if (existing[0]) return { runId: existing[0].id, reportCode: values.reportCode, checksum: existing[0].checksum, rowCount: existing[0].rowCount, idempotent: true };
+
+    const cells = await generateMohReport(tx as unknown as ReportingDatabase, { facilityId: values.facilityId, branchId: values.branchId ?? null, reportCode: values.reportCode, periodStart: period.periodStart, periodEnd: period.periodEnd, month: period.month ?? Number(period.periodStart.slice(5, 7)), year: period.year, epiWeek: period.epiWeek, epiYear: period.epiYear });
+    const checksum = mohChecksum(cells);
+    const [run] = await tx.insert(reportRuns).values({
+      facilityId: values.facilityId, reportId: catalogue.id, branchId: values.branchId ?? null,
+      periodStart: period.periodStart, periodEnd: period.periodEnd, epiWeek: period.epiWeek, epiYear: period.epiYear,
+      month: period.month, year: period.year, status: "generated", rowCount: cells.length, checksum,
+      generatedBy: values.actor.userId, generatedAt: new Date(), createdBy: values.actor.userId, version: 1,
+    }).returning({ id: reportRuns.id });
+    if (cells.length) {
+      await tx.insert(reportCells).values(cells.map((c) => ({ facilityId: values.facilityId, reportRunId: run.id, section: c.section ?? null, rowCode: c.rowCode ?? null, rowLabel: c.rowLabel ?? null, colKey: c.colKey ?? null, colLabel: c.colLabel ?? null, valueNumeric: c.valueNumeric == null ? null : String(c.valueNumeric), valueText: c.valueText ?? null, sortOrder: c.sortOrder, isTotal: Boolean(c.isTotal), sourceQuery: c.sourceQuery ?? null })));
+    }
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_generated", entity: "report_run", entityId: run.id, details: { reportCode: values.reportCode, periodStart: period.periodStart, periodEnd: period.periodEnd, checksum, rowCount: cells.length } });
+    return { runId: run.id, reportCode: values.reportCode, checksum, rowCount: cells.length, idempotent: false };
+  }, options);
+}
+
+export const regenerateReportRunSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, runId: z.string().uuid(), today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
+export async function regenerateReportRun(input: z.input<typeof regenerateReportRunSchema>, options: CommandOptions = {}) {
+  const values = regenerateReportRunSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "regenerateReportRun", async (tx) => {
+    const [run] = await tx.select().from(reportRuns).where(and(eq(reportRuns.facilityId, values.facilityId), eq(reportRuns.id, values.runId))).limit(1);
+    if (!run) throw new Error("Report run not found");
+    if (run.status === "submitted" || run.status === "void") throw new Error("Submitted or voided runs cannot be regenerated");
+    await assertPeriodNotClosed(tx, values.facilityId, String(run.periodStart), String(run.periodEnd));
+    const [cat] = await tx.select().from(reportCatalogue).where(eq(reportCatalogue.id, run.reportId)).limit(1);
+    if (!cat || !isMohReportCode(cat.reportCode)) throw new Error("Only MOH statutory runs can be regenerated here");
+    const reportCode = cat.reportCode as MohReportCode;
+    const cells = await generateMohReport(tx as unknown as ReportingDatabase, { facilityId: values.facilityId, branchId: run.branchId, reportCode, periodStart: String(run.periodStart), periodEnd: String(run.periodEnd), month: run.month ?? Number(String(run.periodStart).slice(5, 7)), year: run.year ?? Number(String(run.periodStart).slice(0, 4)), epiWeek: run.epiWeek, epiYear: run.epiYear });
+    await tx.delete(reportCells).where(eq(reportCells.reportRunId, run.id));
+    const checksum = mohChecksum(cells);
+    if (cells.length) await tx.insert(reportCells).values(cells.map((c) => ({ facilityId: values.facilityId, reportRunId: run.id, section: c.section ?? null, rowCode: c.rowCode ?? null, rowLabel: c.rowLabel ?? null, colKey: c.colKey ?? null, colLabel: c.colLabel ?? null, valueNumeric: c.valueNumeric == null ? null : String(c.valueNumeric), valueText: c.valueText ?? null, sortOrder: c.sortOrder, isTotal: Boolean(c.isTotal), sourceQuery: c.sourceQuery ?? null })));
+    await tx.update(reportRuns).set({ status: "generated", rowCount: cells.length, checksum, generatedBy: values.actor.userId, generatedAt: new Date(), updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_regenerated", entity: "report_run", entityId: run.id, details: { reportCode, checksum, rowCount: cells.length } });
+    return { runId: run.id, checksum, rowCount: cells.length };
+  }, options);
+}
+
+export const submitReportRunSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, runId: z.string().uuid(), acknowledgementRef: z.string().trim().max(120).optional().nullable() });
+export async function submitReportRun(input: z.input<typeof submitReportRunSchema>, options: CommandOptions = {}) {
+  const values = submitReportRunSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "submitReportRun", async (tx) => {
+    const [run] = await tx.select().from(reportRuns).where(and(eq(reportRuns.facilityId, values.facilityId), eq(reportRuns.id, values.runId))).limit(1);
+    if (!run) throw new Error("Report run not found");
+    if (run.status !== "generated" && run.status !== "exported") throw new Error("Only a generated report can be submitted");
+    const ref = values.acknowledgementRef?.trim() || `SUB-${run.id.slice(0, 8).toUpperCase()}`;
+    await tx.update(reportRuns).set({ status: "submitted", submittedAt: new Date(), submittedBy: values.actor.userId, acknowledgementRef: ref, updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_submitted", entity: "report_run", entityId: run.id, details: { acknowledgementRef: ref } });
+    return { runId: run.id, acknowledgementRef: ref };
+  }, options);
+}
+
+export const voidReportRunSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, runId: z.string().uuid(), reason: z.string().trim().min(1).max(500) });
+export async function voidReportRun(input: z.input<typeof voidReportRunSchema>, options: CommandOptions = {}) {
+  const values = voidReportRunSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "voidReportRun", async (tx) => {
+    const [run] = await tx.select().from(reportRuns).where(and(eq(reportRuns.facilityId, values.facilityId), eq(reportRuns.id, values.runId))).limit(1);
+    if (!run) throw new Error("Report run not found");
+    if (run.status === "void") return { runId: run.id, alreadyVoided: true };
+    await tx.update(reportRuns).set({ status: "void", voidedAt: new Date(), voidReason: values.reason, updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_voided", entity: "report_run", entityId: run.id, details: { reason: values.reason, previousStatus: run.status } });
+    return { runId: run.id, alreadyVoided: false };
+  }, options);
+}
+
+export const exportReportRunSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, runId: z.string().uuid(), format: z.enum(["csv", "xlsx", "pdf"]) });
+export async function exportReportRun(input: z.input<typeof exportReportRunSchema>, options: CommandOptions = {}) {
+  const values = exportReportRunSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "exportReportRun", async (tx) => {
+    const [run] = await tx.select().from(reportRuns).where(and(eq(reportRuns.facilityId, values.facilityId), eq(reportRuns.id, values.runId))).limit(1);
+    if (!run) throw new Error("Report run not found");
+    await tx.update(reportRuns).set({ status: run.status === "submitted" ? "submitted" : "exported", exportedFile: values.format, updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_exported", entity: "report_run", entityId: run.id, details: { format: values.format } });
+    return { runId: run.id, format: values.format, checksum: run.checksum };
+  }, options);
+}
+
+export const createNotifiableEventSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, patientId: z.string().uuid().nullable().optional(), encounterId: z.string().uuid().nullable().optional(), diseaseCode: z.string().trim().max(64).nullable().optional(), diseaseName: z.string().trim().min(1).max(200), classification: z.string().trim().max(120).nullable().optional(), onsetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), detectedAt: z.string().datetime().optional(), notes: z.string().trim().max(2000).nullable().optional() });
+export async function createNotifiableEvent(input: z.input<typeof createNotifiableEventSchema>, options: CommandOptions = {}) {
+  const values = createNotifiableEventSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "createNotifiableEvent", async (tx) => {
+    const immediate = /cholera|measles|polio|afp|vhf|ebola|yellow fever|plague|anthrax|rabies/i.test(values.diseaseName);
+    const [row] = await tx.insert(notifiableEvents).values({ facilityId: values.facilityId, patientId: values.patientId ?? null, encounterId: values.encounterId ?? null, diseaseCode: values.diseaseCode ?? null, diseaseName: values.diseaseName, classification: values.classification ?? (immediate ? "immediate" : "weekly"), onsetDate: values.onsetDate ?? null, detectedAt: values.detectedAt ? new Date(values.detectedAt) : new Date(), status: "draft", notes: values.notes ?? null, createdBy: values.actor.userId, version: 1 }).returning({ id: notifiableEvents.id });
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "notifiable_event_created", entity: "notifiable_event", entityId: row.id, details: { diseaseName: values.diseaseName, immediate } });
+    return { eventId: row.id, immediate };
+  }, options);
+}
+
+export const submitNotifiableEventSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, eventId: z.string().uuid(), reportedTo: z.string().trim().min(1).max(200), method: z.string().trim().max(64).nullable().optional() });
+export async function submitNotifiableEvent(input: z.input<typeof submitNotifiableEventSchema>, options: CommandOptions = {}) {
+  const values = submitNotifiableEventSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "submitNotifiableEvent", async (tx) => {
+    const [row] = await tx.select().from(notifiableEvents).where(and(eq(notifiableEvents.facilityId, values.facilityId), eq(notifiableEvents.id, values.eventId))).limit(1);
+    if (!row) throw new Error("Notifiable event not found");
+    await tx.update(notifiableEvents).set({ status: "submitted", reportedAt: new Date(), reportedTo: values.reportedTo, method: values.method ?? null, updatedAt: new Date(), version: sql`${notifiableEvents.version} + 1` }).where(eq(notifiableEvents.id, row.id));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "notifiable_event_submitted", entity: "notifiable_event", entityId: row.id, details: { reportedTo: values.reportedTo } });
+    return { eventId: row.id };
+  }, options);
+}
+
+async function allocateNotificationNo(_tx: CommandTransaction, _facilityId: string, prefix: string) {
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+export const createBirthNotificationSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, patientId: z.string().uuid().nullable().optional(), encounterId: z.string().uuid().nullable().optional(), childMrn: z.string().trim().max(64).nullable().optional(), sex: z.string().trim().max(16).nullable().optional(), birthWeightKg: z.number().nonnegative().nullable().optional(), birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), notes: z.string().trim().max(2000).nullable().optional() });
+export async function createBirthNotification(input: z.input<typeof createBirthNotificationSchema>, options: CommandOptions = {}) {
+  const values = createBirthNotificationSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "createBirthNotification", async (tx) => {
+    const notificationNo = await allocateNotificationNo(tx, values.facilityId, "BN");
+    const [row] = await tx.insert(birthNotifications).values({ facilityId: values.facilityId, patientId: values.patientId ?? null, encounterId: values.encounterId ?? null, childMrn: values.childMrn ?? null, sex: values.sex ?? null, birthWeightKg: values.birthWeightKg == null ? null : String(values.birthWeightKg), birthDate: values.birthDate, notificationNo, notifiedAt: new Date(), status: "submitted", notes: values.notes ?? null, createdBy: values.actor.userId, version: 1 }).returning({ id: birthNotifications.id, notificationNo: birthNotifications.notificationNo });
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "birth_notification_created", entity: "birth_notification", entityId: row.id, details: { notificationNo: row.notificationNo, birthDate: values.birthDate } });
+    return { notificationId: row.id, notificationNo: row.notificationNo };
+  }, options);
+}
+
+export const createDeathNotificationSchema = z.object({ facilityId: z.string().uuid(), idempotencyKey: z.string().uuid(), actor: baseActor, patientId: z.string().uuid().nullable().optional(), encounterId: z.string().uuid().nullable().optional(), dateOfDeath: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), causeCode: z.string().trim().max(64).nullable().optional(), causeText: z.string().trim().max(500).nullable().optional(), placeOfDeath: z.string().trim().max(200).nullable().optional(), notes: z.string().trim().max(2000).nullable().optional() });
+export async function createDeathNotification(input: z.input<typeof createDeathNotificationSchema>, options: CommandOptions = {}) {
+  const values = createDeathNotificationSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "createDeathNotification", async (tx) => {
+    const notificationNo = await allocateNotificationNo(tx, values.facilityId, "DN");
+    const [row] = await tx.insert(deathNotifications).values({ facilityId: values.facilityId, patientId: values.patientId ?? null, encounterId: values.encounterId ?? null, dateOfDeath: values.dateOfDeath, causeCode: values.causeCode ?? null, causeText: values.causeText ?? null, placeOfDeath: values.placeOfDeath ?? null, notificationNo, notifiedAt: new Date(), status: "submitted", notes: values.notes ?? null, createdBy: values.actor.userId, version: 1 }).returning({ id: deathNotifications.id, notificationNo: deathNotifications.notificationNo });
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "death_notification_created", entity: "death_notification", entityId: row.id, details: { notificationNo: row.notificationNo, dateOfDeath: values.dateOfDeath } });
+    return { notificationId: row.id, notificationNo: row.notificationNo };
+  }, options);
 }
