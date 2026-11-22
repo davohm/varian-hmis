@@ -12,6 +12,7 @@ import {
 } from "@/lib/finance";
 import { newId } from "@/lib/uuid";
 import { recordAudit } from "@/server/audit";
+import { ForbiddenError } from "@/server/auth/guards";
 import {
   charges,
   claimDenials,
@@ -43,6 +44,15 @@ const baseSchema = {
 function actorId(values: { actor: { userId?: string | null } }): string {
   if (!values.actor.userId) throw new Error("A signed-in user is required");
   return values.actor.userId;
+}
+
+/** Command-layer segregation of duties; the actor is resolved by the API, never by the client. */
+function assertDifferentActor(
+  actor: string,
+  priorActor: string | null | undefined,
+  message: string,
+): void {
+  if (priorActor && priorActor === actor) throw new ForbiddenError(message);
 }
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use an ISO date (YYYY-MM-DD)");
@@ -605,6 +615,11 @@ export async function decidePreAuthorization(
         .for("update");
       const auth = rows[0];
       if (!auth) throw new Error("Pre-authorisation not found in this facility");
+      assertDifferentActor(
+        userId,
+        auth.createdBy,
+        "The requester cannot decide their own pre-authorisation",
+      );
       if (auth.status !== "requested") {
         throw new Error(`This pre-authorisation is already ${auth.status}`);
       }
@@ -906,7 +921,24 @@ export async function transitionClaim(
       const claim = await loadClaim(tx, values.facilityId, values.claimId);
       assertClaimTransition(claim.status, values.to);
 
-      if (values.to === "submitted" || values.to === "resubmitted") {
+      const isSubmission = values.to === "submitted" || values.to === "resubmitted";
+      if (isSubmission) {
+        assertDifferentActor(
+          userId,
+          claim.createdBy,
+          "The claim preparer cannot submit this claim",
+        );
+      }
+      if (values.to === "accepted") {
+        assertDifferentActor(userId, claim.createdBy, "The claim preparer cannot approve this claim");
+        assertDifferentActor(
+          userId,
+          claim.submittedBy,
+          "The claim submitter cannot approve this claim",
+        );
+      }
+
+      if (isSubmission) {
         await assertValidPayerSharingConsent(tx, {
           facilityId: values.facilityId,
           patientId: claim.patientId,
@@ -941,10 +973,10 @@ export async function transitionClaim(
         .set({
           status: values.to,
           approvedAmount,
-          submittedAt:
-            values.to === "submitted" || values.to === "resubmitted"
-              ? now
-              : claim.submittedAt,
+          submittedAt: isSubmission ? now : claim.submittedAt,
+          submittedBy: isSubmission ? userId : claim.submittedBy,
+          approvedAt: values.to === "accepted" ? now : claim.approvedAt,
+          approvedBy: values.to === "accepted" ? userId : claim.approvedBy,
           resolvedAt: values.to === "paid" || values.to === "closed" ? now : claim.resolvedAt,
           notes: values.note?.trim() || claim.notes,
           updatedAt: now,
@@ -1061,6 +1093,22 @@ export async function recordRemittance(
         throw new Error("Submit the claim before recording a remittance");
       }
       if (claim.status === "closed") throw new Error("This claim is closed");
+
+      assertDifferentActor(
+        userId,
+        claim.createdBy,
+        "The claim preparer cannot record a remittance",
+      );
+      assertDifferentActor(
+        userId,
+        claim.submittedBy,
+        "The claim submitter cannot record a remittance",
+      );
+      assertDifferentActor(
+        userId,
+        claim.approvedBy,
+        "The claim approver cannot record a remittance",
+      );
 
       const target = toCents(claim.approvedAmount) > 0 ? claim.approvedAmount : claim.total;
       const outstandingCents = Math.max(0, toCents(target) - toCents(claim.paidAmount));

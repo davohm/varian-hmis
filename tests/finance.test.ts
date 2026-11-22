@@ -36,10 +36,12 @@ import {
 } from "../src/server/commands/revenue";
 import {
   auditLog,
+  claims,
   dataConsents,
   encounters,
   invoices,
   patients,
+  preAuthorizations,
   remittances,
   staffRoleScopes,
   syncOutbox,
@@ -82,6 +84,13 @@ afterAll(async () => {
 });
 
 const ACTOR = { userId: "vitest", deviceId: "finance-station" };
+const PREPARER = { userId: "vitest-claim-preparer", deviceId: "finance-station" };
+const SUBMITTER = { userId: "vitest-claim-submitter", deviceId: "finance-station" };
+const RESUBMITTER = { userId: "vitest-claim-resubmitter", deviceId: "finance-station" };
+const APPROVER = { userId: "vitest-claim-approver", deviceId: "finance-station" };
+const REMITTANCE_CLERK = { userId: "vitest-remittance-clerk", deviceId: "finance-station" };
+const REQUESTER = { userId: "vitest-preauth-requester", deviceId: "finance-station" };
+const DECIDER = { userId: "vitest-preauth-decider", deviceId: "finance-station" };
 const ENTRY_DATE = "2026-03-15";
 
 interface FinanceFixture {
@@ -628,6 +637,27 @@ async function withRevenueFacility<T>(
   });
 }
 
+async function createRevenueClaim(
+  fixture: RevenueFixture,
+  actor: { userId: string; deviceId: string } = PREPARER,
+  description = "Consultation",
+  amount = "5000.00",
+) {
+  return createClaim(
+    {
+      facilityId: fixture.facility.id,
+      idempotencyKey: newIdempotencyKey(),
+      actor,
+      payerId: fixture.payerId,
+      patientId: fixture.patientId,
+      encounterId: fixture.encounterId,
+      invoiceId: fixture.invoiceId,
+      lines: [{ description, amount }],
+    },
+    { database: ctx.db },
+  );
+}
+
 describe("revenue cycle", () => {
   it("moves a claim from draft to paid and books the receivable twice", async () => {
     await withRevenueFacility(async (fixture) => {
@@ -635,7 +665,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: PREPARER,
           payerId: fixture.payerId,
           patientId: fixture.patientId,
           encounterId: fixture.encounterId,
@@ -651,7 +681,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: SUBMITTER,
           claimId: claim.claimId,
           to: "submitted",
         },
@@ -666,7 +696,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: APPROVER,
           claimId: claim.claimId,
           to: "accepted",
           approvedAmount: "5000.00",
@@ -678,7 +708,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: REMITTANCE_CLERK,
           claimId: claim.claimId,
           amount: "5000.00",
           reference: "REM-001",
@@ -712,7 +742,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: PREPARER,
           payerId: fixture.payerId,
           patientId: fixture.patientId,
           encounterId: fixture.encounterId,
@@ -726,7 +756,7 @@ describe("revenue cycle", () => {
           {
             facilityId: fixture.facility.id,
             idempotencyKey: newIdempotencyKey(),
-            actor: ACTOR,
+            actor: PREPARER,
             claimId: claim.claimId,
             to: "paid",
           },
@@ -738,7 +768,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: SUBMITTER,
           claimId: claim.claimId,
           to: "submitted",
         },
@@ -750,7 +780,7 @@ describe("revenue cycle", () => {
           {
             facilityId: fixture.facility.id,
             idempotencyKey: newIdempotencyKey(),
-            actor: ACTOR,
+            actor: REMITTANCE_CLERK,
             claimId: claim.claimId,
             amount: "3500.00",
           },
@@ -769,7 +799,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: REQUESTER,
           payerId: fixture.payerId,
           patientId: fixture.patientId,
           encounterId: fixture.encounterId,
@@ -785,7 +815,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: DECIDER,
           preAuthId: request.preAuthId,
           decision: "approved",
           approvedAmount: "7500.00",
@@ -803,7 +833,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: PREPARER,
           payerId: fixture.payerId,
           patientId: fixture.patientId,
           encounterId: fixture.encounterId,
@@ -815,7 +845,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: SUBMITTER,
           claimId: claim.claimId,
           to: "submitted",
         },
@@ -825,7 +855,7 @@ describe("revenue cycle", () => {
         {
           facilityId: fixture.facility.id,
           idempotencyKey: newIdempotencyKey(),
-          actor: ACTOR,
+          actor: REMITTANCE_CLERK,
           claimId: claim.claimId,
           amount: "1000.00",
         },
@@ -866,6 +896,353 @@ describe("revenue cycle", () => {
       const accounts = await listLedgerAccounts(ctx.db, facility.id);
       expect(accounts.length).toBe(DEFAULT_CHART_OF_ACCOUNTS.length);
       expect(accounts.some((account) => account.systemRole === "patient_receivable")).toBe(true);
+    });
+  });
+
+  it("records the actor for every claim lifecycle step", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const claim = await createRevenueClaim(fixture);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SUBMITTER,
+          claimId: claim.claimId,
+          to: "submitted",
+        },
+        { database: ctx.db },
+      );
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          claimId: claim.claimId,
+          to: "accepted",
+          approvedAmount: "5000.00",
+        },
+        { database: ctx.db },
+      );
+      await recordRemittance(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: REMITTANCE_CLERK,
+          claimId: claim.claimId,
+          amount: "5000.00",
+        },
+        { database: ctx.db },
+      );
+
+      const [row] = await ctx.db
+        .select({
+          createdBy: claims.createdBy,
+          submittedBy: claims.submittedBy,
+          submittedAt: claims.submittedAt,
+          approvedBy: claims.approvedBy,
+          approvedAt: claims.approvedAt,
+        })
+        .from(claims)
+        .where(eq(claims.id, claim.claimId));
+      expect(row).toMatchObject({
+        createdBy: PREPARER.userId,
+        submittedBy: SUBMITTER.userId,
+        approvedBy: APPROVER.userId,
+      });
+      expect(row?.submittedAt).toBeInstanceOf(Date);
+      expect(row?.approvedAt).toBeInstanceOf(Date);
+
+      const [cash] = await ctx.db
+        .select({ createdBy: remittances.createdBy })
+        .from(remittances)
+        .where(eq(remittances.claimId, claim.claimId));
+      expect(cash?.createdBy).toBe(REMITTANCE_CLERK.userId);
+    });
+  });
+
+  it("refuses to let the preparer submit their own claim", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const claim = await createRevenueClaim(fixture);
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: PREPARER,
+            claimId: claim.claimId,
+            to: "submitted",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/preparer cannot submit/i);
+
+      const [row] = await ctx.db
+        .select({ status: claims.status, submittedBy: claims.submittedBy })
+        .from(claims)
+        .where(eq(claims.id, claim.claimId));
+      expect(row?.status).toBe("draft");
+      expect(row?.submittedBy).toBeNull();
+    });
+  });
+
+  it("refuses approval by the preparer or submitter", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const claim = await createRevenueClaim(fixture);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SUBMITTER,
+          claimId: claim.claimId,
+          to: "submitted",
+        },
+        { database: ctx.db },
+      );
+
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: PREPARER,
+            claimId: claim.claimId,
+            to: "accepted",
+            approvedAmount: "5000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/preparer cannot approve/i);
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: SUBMITTER,
+            claimId: claim.claimId,
+            to: "accepted",
+            approvedAmount: "5000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/submitter cannot approve/i);
+
+      const [row] = await ctx.db
+        .select({ status: claims.status })
+        .from(claims)
+        .where(eq(claims.id, claim.claimId));
+      expect(row?.status).toBe("submitted");
+
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: APPROVER,
+            claimId: claim.claimId,
+            to: "accepted",
+            approvedAmount: "5000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).resolves.toMatchObject({ status: "accepted" });
+    });
+  });
+
+  it("refuses a remittance from any actor in the claim chain", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const claim = await createRevenueClaim(fixture);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SUBMITTER,
+          claimId: claim.claimId,
+          to: "submitted",
+        },
+        { database: ctx.db },
+      );
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          claimId: claim.claimId,
+          to: "accepted",
+          approvedAmount: "5000.00",
+        },
+        { database: ctx.db },
+      );
+
+      const blocked: Array<[{ userId: string; deviceId: string }, RegExp]> = [
+        [PREPARER, /preparer cannot record/i],
+        [SUBMITTER, /submitter cannot record/i],
+        [APPROVER, /approver cannot record/i],
+      ];
+      for (const [actor, message] of blocked) {
+        await expect(
+          recordRemittance(
+            {
+              facilityId: fixture.facility.id,
+              idempotencyKey: newIdempotencyKey(),
+              actor,
+              claimId: claim.claimId,
+              amount: "1000.00",
+            },
+            { database: ctx.db },
+          ),
+        ).rejects.toThrow(message);
+      }
+
+      const rows = await ctx.db
+        .select({ id: remittances.id })
+        .from(remittances)
+        .where(eq(remittances.claimId, claim.claimId));
+      expect(rows).toHaveLength(0);
+
+      await expect(
+        recordRemittance(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: REMITTANCE_CLERK,
+            claimId: claim.claimId,
+            amount: "1000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).resolves.toMatchObject({ amount: "1000.00" });
+    });
+  });
+
+  it("re-binds the submitter and approver after a resubmission", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const claim = await createRevenueClaim(fixture);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SUBMITTER,
+          claimId: claim.claimId,
+          to: "submitted",
+        },
+        { database: ctx.db },
+      );
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          claimId: claim.claimId,
+          to: "queried",
+        },
+        { database: ctx.db },
+      );
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: PREPARER,
+            claimId: claim.claimId,
+            to: "resubmitted",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/preparer cannot submit/i);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: RESUBMITTER,
+          claimId: claim.claimId,
+          to: "resubmitted",
+        },
+        { database: ctx.db },
+      );
+      await expect(
+        transitionClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: RESUBMITTER,
+            claimId: claim.claimId,
+            to: "accepted",
+            approvedAmount: "5000.00",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/submitter cannot approve/i);
+      await transitionClaim(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          claimId: claim.claimId,
+          to: "accepted",
+          approvedAmount: "5000.00",
+        },
+        { database: ctx.db },
+      );
+
+      const [row] = await ctx.db
+        .select({ submittedBy: claims.submittedBy, approvedBy: claims.approvedBy })
+        .from(claims)
+        .where(eq(claims.id, claim.claimId));
+      expect(row).toMatchObject({
+        submittedBy: RESUBMITTER.userId,
+        approvedBy: APPROVER.userId,
+      });
+    });
+  });
+
+  it("refuses a pre-authorisation decision by the requester", async () => {
+    await withRevenueFacility(async (fixture) => {
+      const request = await requestPreAuthorization(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: REQUESTER,
+          payerId: fixture.payerId,
+          patientId: fixture.patientId,
+          encounterId: fixture.encounterId,
+          requestedAmount: "8000.00",
+        },
+        { database: ctx.db },
+      );
+      await expect(
+        decidePreAuthorization(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: REQUESTER,
+            preAuthId: request.preAuthId,
+            decision: "approved",
+            approvedAmount: "7500.00",
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/requester cannot decide/i);
+
+      const [row] = await ctx.db
+        .select({ status: preAuthorizations.status, decidedBy: preAuthorizations.decidedBy })
+        .from(preAuthorizations)
+        .where(eq(preAuthorizations.id, request.preAuthId));
+      expect(row?.status).toBe("requested");
+      expect(row?.decidedBy).toBeNull();
+
+      await expect(
+        decidePreAuthorization(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: DECIDER,
+            preAuthId: request.preAuthId,
+            decision: "approved",
+            approvedAmount: "7500.00",
+          },
+          { database: ctx.db },
+        ),
+      ).resolves.toMatchObject({ status: "approved" });
     });
   });
 });
