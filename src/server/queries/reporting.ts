@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 
 import { fromCents, sumAmounts, toCents } from "@/lib/billing";
 import {
@@ -30,6 +30,8 @@ import {
   journalEntries,
   journalLines,
   ledgerAccounts,
+  birthNotifications,
+  deathNotifications,
   diagnoses,
   encounters,
   notifiableEvents,
@@ -1176,6 +1178,54 @@ export async function drillDownReportCell(database: ReportingDatabase, facilityI
       return needles.some((n) => name.includes(n));
     }).map((r) => ({ eventId: r.id, diseaseName: r.diseaseName, detectedAt: r.detectedAt instanceof Date ? r.detectedAt.toISOString() : String(r.detectedAt), status: r.status, patientId: r.patientId }));
     return { cell, sourceQuery: cell.sourceQuery, sourceRows: matched };
+  }
+  if (run && reportCode === "MOH717") {
+    const periodStart = new Date(`${String(run.periodStart)}T00:00:00.000Z`);
+    const periodEnd = new Date(`${String(run.periodEnd)}T23:59:59.999Z`);
+    if (rowCode === "B.1") {
+      const rows = await database.select({ id: birthNotifications.id, birthDate: birthNotifications.birthDate, patientId: birthNotifications.patientId }).from(birthNotifications).where(and(eq(birthNotifications.facilityId, facilityId), gte(birthNotifications.birthDate, String(run.periodStart)), lte(birthNotifications.birthDate, String(run.periodEnd))));
+      return { cell, sourceQuery: cell.sourceQuery, sourceRows: rows };
+    }
+    if (rowCode === "B.2") {
+      const rows = await database.select({ id: deathNotifications.id, dateOfDeath: deathNotifications.dateOfDeath, patientId: deathNotifications.patientId }).from(deathNotifications).where(and(eq(deathNotifications.facilityId, facilityId), gte(deathNotifications.dateOfDeath, String(run.periodStart)), lte(deathNotifications.dateOfDeath, String(run.periodEnd))));
+      return { cell, sourceQuery: cell.sourceQuery, sourceRows: rows };
+    }
+    const rows = await database.select({ id: encounters.id, startedAt: encounters.startedAt, patientId: encounters.patientId, dob: patients.dob, sex: patients.sex })
+      .from(encounters).innerJoin(patients, eq(patients.id, encounters.patientId))
+      .where(and(eq(encounters.facilityId, facilityId), gte(encounters.startedAt, periodStart), lte(encounters.startedAt, periodEnd)));
+    const patientIds = Array.from(new Set(rows.map((r) => r.patientId)));
+    const priorByPatient = new Set<string>();
+    if (patientIds.length > 0) {
+      const prior = await database.select({ patientId: encounters.patientId }).from(encounters).where(and(eq(encounters.facilityId, facilityId), inArray(encounters.patientId, patientIds), lt(encounters.startedAt, periodStart)));
+      for (const p of prior) priorByPatient.add(p.patientId);
+    }
+    const matched = rows.filter((r) => {
+      const started = r.startedAt instanceof Date ? r.startedAt : new Date(String(r.startedAt));
+      const age = ageAt(r.dob, started);
+      const male = (r.sex ?? "").toLowerCase() === "male";
+      const revisit = priorByPatient.has(r.patientId);
+      const colMatch = colKey === "total" ? true : colKey === "new" ? !revisit : colKey === "re_att" ? revisit : true;
+      if (!colMatch) return false;
+      if (rowCode === "A.1.1") return age >= 5 && male;
+      if (rowCode === "A.1.2") return age >= 5 && !male;
+      if (rowCode === "A.1.3") return age < 5 && male;
+      if (rowCode === "A.1.4") return age < 5 && !male;
+      if (rowCode === "A.1.5T") return true;
+      if (rowCode === "A.1.60") return age >= 60;
+      return false;
+    }).map((r) => ({ encounterId: r.id, patientId: r.patientId, startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : String(r.startedAt), sex: r.sex, revisit: priorByPatient.has(r.patientId) }));
+    return { cell, sourceQuery: cell.sourceQuery, sourceRows: matched };
+  }
+  if (run && reportCode === "MOH416") {
+    const periodStart = new Date(`${String(run.periodStart)}T00:00:00.000Z`);
+    const periodEnd = new Date(`${String(run.periodEnd)}T23:59:59.999Z`);
+    const rows = await database.select({ encounterId: encounters.id, patientId: encounters.patientId, startedAt: encounters.startedAt, status: encounters.status }).from(encounters).where(and(eq(encounters.facilityId, facilityId), gte(encounters.startedAt, periodStart), lte(encounters.startedAt, periodEnd)));
+    const mapped = rows.map((r) => ({ encounterId: r.encounterId, patientId: r.patientId, startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : String(r.startedAt), status: r.status }));
+    if (["total_seen", "net_seen", "value"].includes(colKey) || rowCode === "total_seen" || rowCode === "net_seen") return { cell, sourceQuery: cell.sourceQuery, sourceRows: mapped };
+    return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
+  }
+  if (run && (reportCode === "MOH710A" || reportCode === "MOH710B" || reportCode === "MOH735")) {
+    return { cell, sourceQuery: cell.sourceQuery ?? `${reportCode} cell derived from configured/template operational sources; no row-level source mapped in current generator`, sourceRows: [] };
   }
   return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
 }

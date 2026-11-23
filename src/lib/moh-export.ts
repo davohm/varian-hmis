@@ -30,23 +30,54 @@ export function cellsToCsv(cells: ExportCell[]) {
   return lines.join("\n");
 }
 
-export function cellsToXlsHtml(reportCode: string, periodLabel: string, cells: ExportCell[]) {
-  const rows = cells.map((c) => `<tr${c.isTotal ? ' style="font-weight:bold;background:#f3f4f6"' : ""}><td>${esc(c.section ?? "")}</td><td>${esc(c.rowCode ?? "")}</td><td>${esc(c.rowLabel ?? "")}</td><td>${esc(c.colKey ?? "")}</td><td>${esc(c.colLabel ?? "")}</td><td style="text-align:right">${esc(c.valueNumeric ?? c.valueText ?? "")}</td></tr>`).join("");
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportCode)}</title></head><body><h2>${esc(reportCode)} ${esc(periodLabel)}</h2><table border="1" cellspacing="0" cellpadding="4"><thead><tr><th>Section</th><th>Row</th><th>Row Label</th><th>Col</th><th>Col Label</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+export interface MohExportMeta {
+  facilityName?: string | null;
+  county?: string | null;
+  subCounty?: string | null;
+  ward?: string | null;
+  mflCode?: string | null;
+  epiWeek?: string | null;
+  epiYear?: number | null;
+  weekEnding?: string | null;
+  month?: string | null;
+  year?: number | null;
 }
 
-export function cellsToPrintHtml(reportCode: string, reportName: string, periodLabel: string, checksum: string | null, cells: ExportCell[]) {
+function letterhead(meta?: MohExportMeta) {
+  if (!meta) return "";
+  const parts = [
+    meta.facilityName ? `<div><strong>Facility:</strong> ${esc(meta.facilityName)}</div>` : "",
+    meta.mflCode ? `<div><strong>MFL Code:</strong> ${esc(meta.mflCode)}</div>` : "",
+    meta.county ? `<div><strong>County:</strong> ${esc(meta.county)}</div>` : "",
+    meta.subCounty ? `<div><strong>Sub-County:</strong> ${esc(meta.subCounty)}</div>` : "",
+    meta.ward ? `<div><strong>Ward:</strong> ${esc(meta.ward)}</div>` : "",
+    meta.epiWeek ? `<div><strong>Epi Week:</strong> ${esc(meta.epiWeek)}${meta.epiYear ? ` / ${meta.epiYear}` : ""}</div>` : "",
+    meta.weekEnding ? `<div><strong>Week Ending:</strong> ${esc(meta.weekEnding)}</div>` : "",
+    meta.month ? `<div><strong>Month:</strong> ${esc(meta.month)}${meta.year ? ` ${meta.year}` : ""}</div>` : "",
+  ].filter(Boolean);
+  return parts.length ? `<div class="letterhead">${parts.join("")}</div>` : "";
+}
+
+export function cellsToXlsHtml(reportCode: string, periodLabel: string, cells: ExportCell[], meta?: MohExportMeta) {
+  const rows = cells.map((c) => `<tr${c.isTotal ? ' style="font-weight:bold;background:#f3f4f6"' : ""}><td>${esc(c.section ?? "")}</td><td>${esc(c.rowCode ?? "")}</td><td>${esc(c.rowLabel ?? "")}</td><td>${esc(c.colKey ?? "")}</td><td>${esc(c.colLabel ?? "")}</td><td style="text-align:right">${esc(c.valueNumeric ?? c.valueText ?? "")}</td></tr>`).join("");
+  const lh = meta ? `<table border="0" cellpadding="2" style="margin-bottom:8px"><tr><td><b>Facility</b></td><td>${esc(meta.facilityName ?? "")}</td><td><b>County</b></td><td>${esc(meta.county ?? "")}</td><td><b>Sub-County</b></td><td>${esc(meta.subCounty ?? "")}</td></tr><tr><td><b>MFL</b></td><td>${esc(meta.mflCode ?? "")}</td><td><b>Epi Week</b></td><td>${esc(meta.epiWeek ?? "")}</td><td><b>Week Ending</b></td><td>${esc(meta.weekEnding ?? periodLabel)}</td></tr></table>` : "";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportCode)}</title></head><body><h2>${esc(reportCode)} ${esc(periodLabel)}</h2>${lh}<table border="1" cellspacing="0" cellpadding="4"><thead><tr><th>Section</th><th>Row</th><th>Row Label</th><th>Col</th><th>Col Label</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table><p>Submitted By: ____________ Date: ______ Signature: ______ &nbsp; Received By: ____________ Date: ______ Signature: ______</p></body></html>`;
+}
+
+export function cellsToPrintHtml(reportCode: string, reportName: string, periodLabel: string, checksum: string | null, cells: ExportCell[], meta?: MohExportMeta) {
   const rows = cells.map((c) => `<tr class="${c.isTotal ? "total" : ""}"><td>${esc(c.section ?? "")}</td><td>${esc(c.rowCode ?? "")}</td><td>${esc(c.rowLabel ?? "")}</td><td>${esc(c.colKey ?? "")}</td><td class="num">${esc(c.valueNumeric ?? c.valueText ?? "")}</td></tr>`).join("");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(reportCode)}</title><style>
-  body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:20px;margin:0}h2{font-size:14px;margin:4px 0 16px;color:#444}
+  body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:20px;margin:0}h2{font-size:14px;margin:4px 0 12px;color:#444}
   table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #333;padding:3px 4px;vertical-align:top}th{background:#eee}
   .num{text-align:right;font-variant-numeric:tabular-nums}.total td{font-weight:bold;background:#f5f5f5}
-  .meta{font-size:11px;color:#444;margin-bottom:12px}.sig{display:flex;gap:48px;margin-top:24px;font-size:12px}.sig div{flex:1;border-top:1px solid #333;padding-top:4px}
+  .meta{font-size:11px;color:#444;margin-bottom:12px}.letterhead{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 12px;font-size:11px;margin:8px 0 12px;padding:8px;border:1px solid #999}
+  .sig{display:flex;gap:48px;margin-top:24px;font-size:12px}.sig div{flex:1;border-top:1px solid #333;padding-top:4px}
   @media print{body{margin:0}.no-print{display:none}}
   </style></head><body>
   <div class="no-print" style="margin-bottom:12px"><button onclick="window.print()">Print / Save PDF</button></div>
   <h1>${esc(reportName)} (${esc(reportCode)})</h1><h2>${esc(periodLabel)}</h2>
-  <div class="meta">Checksum: ${esc(checksum ?? "")} • Cells: ${cells.length} • Generated from operational records</div>
+  ${letterhead(meta)}
+  <div class="meta">Checksum: ${esc(checksum ?? "")} � Cells: ${cells.length} � Generated from operational records</div>
   <table><thead><tr><th>Section</th><th>Row</th><th>Label</th><th>Col</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>
   <div class="sig"><div>Submitted By / Name / Date / Signature</div><div>Received By / Name / Date / Signature</div></div>
   </body></html>`;

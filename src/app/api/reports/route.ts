@@ -66,22 +66,30 @@ export async function GET(request: NextRequest) {
     }
 
     if (runId && exportFormat) {
-      const [run] = await db.select().from((await import("@/server/db/schema")).reportRuns).where((await import("drizzle-orm")).and((await import("drizzle-orm")).eq((await import("@/server/db/schema")).reportRuns.facilityId, facilityId), (await import("drizzle-orm")).eq((await import("@/server/db/schema")).reportRuns.id, runId))).limit(1);
+      const schema = await import("@/server/db/schema");
+      const { and, eq } = await import("drizzle-orm");
+      const [run] = await db.select().from(schema.reportRuns).where(and(eq(schema.reportRuns.facilityId, facilityId), eq(schema.reportRuns.id, runId))).limit(1);
       if (!run) return NextResponse.json({ error: "Report run not found" }, { status: 404 });
-      const [cat] = await db.select().from((await import("@/server/db/schema")).reportCatalogue).where((await import("drizzle-orm")).eq((await import("@/server/db/schema")).reportCatalogue.id, run.reportId)).limit(1);
+      const [cat] = await db.select().from(schema.reportCatalogue).where(eq(schema.reportCatalogue.id, run.reportId)).limit(1);
+      const [facility] = await db.select({ name: schema.facilities.name }).from(schema.facilities).where(eq(schema.facilities.id, facilityId)).limit(1);
+      const profileRows = "facilityRegulatoryProfiles" in schema
+        ? await db.select().from(schema.facilityRegulatoryProfiles).where(eq(schema.facilityRegulatoryProfiles.facilityId, facilityId)).limit(1)
+        : [];
+      const profile = profileRows[0] as Record<string, unknown> | undefined;
       const cells = await getReportCells(db, facilityId, runId);
       const mapped = cells.map((c) => ({ section: c.section, rowCode: c.rowCode, rowLabel: c.rowLabel, colKey: c.colKey, colLabel: c.colLabel, valueNumeric: c.valueNumeric, valueText: c.valueText, sortOrder: c.sortOrder, isTotal: c.isTotal }));
       const checksum = exportChecksum(mapped);
       const periodLabel = `${run.periodStart} to ${run.periodEnd}`;
+      const meta = { facilityName: facility?.name ?? null, county: (profile?.county as string | null) ?? null, subCounty: (profile?.subCounty as string | null) ?? null, ward: (profile?.ward as string | null) ?? null, mflCode: (profile?.mflCode as string | null) ?? (profile?.facilityRegistryId as string | null) ?? null, epiWeek: run.epiWeek != null ? String(run.epiWeek) : null, epiYear: run.epiYear ?? null, weekEnding: run.periodEnd ?? null, month: run.periodStart ? String(run.periodStart).slice(0, 7) : null, year: run.periodStart ? Number(String(run.periodStart).slice(0, 4)) : null };
       const filename = `${cat?.reportCode ?? "report"}-${run.periodEnd}.${exportFormat === "xlsx" ? "xls" : exportFormat === "pdf" ? "html" : "csv"}`;
       if (exportFormat === "csv") {
         return new NextResponse(cellsToCsv(mapped), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       if (exportFormat === "xlsx") {
-        return new NextResponse(cellsToXlsHtml(cat?.reportCode ?? "MOH", periodLabel, mapped), { headers: { "Content-Type": "application/vnd.ms-excel; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
+        return new NextResponse(cellsToXlsHtml(cat?.reportCode ?? "MOH", periodLabel, mapped, meta), { headers: { "Content-Type": "application/vnd.ms-excel; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       if (exportFormat === "pdf") {
-        return new NextResponse(cellsToPrintHtml(cat?.reportCode ?? "MOH", cat?.name ?? "MOH Report", periodLabel, checksum, mapped), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `inline; filename="${filename}"`, "X-Report-Checksum": checksum } });
+        return new NextResponse(cellsToPrintHtml(cat?.reportCode ?? "MOH", cat?.name ?? "MOH Report", periodLabel, checksum, mapped, meta), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `inline; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       return NextResponse.json({ error: "Unsupported export format" }, { status: 400 });
     }
