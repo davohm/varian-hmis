@@ -153,6 +153,7 @@ export const invoices = pgTable(
     total: numeric("total", { precision: 12, scale: 2 }).notNull().default("0"),
     paid: numeric("paid", { precision: 12, scale: 2 }).notNull().default("0"),
     status: invoiceStatusEnum("status").notNull().default("open"),
+    isShaClaimable: boolean("is_sha_claimable").notNull().default(false),
     notes: text("notes"),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     finalizedBy: text("finalized_by"),

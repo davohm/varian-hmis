@@ -1,0 +1,1 @@
+ALTER TABLE "claims" ADD COLUMN "benefit_package_id" uuid;

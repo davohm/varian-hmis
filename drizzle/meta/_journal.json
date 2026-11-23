@@ -239,6 +239,27 @@
       "when": 1795422273817,
       "tag": "0033_bored_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795426796204,
+      "tag": "0034_wild_phil_sheldon",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795426968744,
+      "tag": "0035_rapid_spiral",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795427184245,
+      "tag": "0036_curly_jane_foster",
+      "breakpoints": true
     }
   ]
 }

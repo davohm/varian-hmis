@@ -18,6 +18,8 @@ import {
   bankAccounts,
   bankReconciliations,
   bankTransactions,
+  benefitPackageItems,
+  benefitPackages,
   birthNotifications,
   branches,
   budgetLines,
@@ -114,6 +116,11 @@ import {
   services,
   session,
   shaAdjudicationCodes,
+  shaEligibilityChecks,
+  shaEmpanelments,
+  shaPaymentReconciliation,
+  shaReconciliationLines,
+  shaWaivers,
   shiftAssignments,
   shiftTemplates,
   statutoryFeeSchedules,
@@ -243,6 +250,19 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
       .delete(payments)
       .where(and(eq(payments.facilityId, facilityId), isNotNull(payments.reversedPaymentId)));
     await tx.delete(claimDenials).where(eq(claimDenials.facilityId, facilityId));
+
+    // SHA setup and cycle records reference claims, invoices and patients, so
+    // tear them down before those parents. Reconciliation lines precede their report.
+    await tx.delete(shaReconciliationLines).where(eq(shaReconciliationLines.facilityId, facilityId));
+    await tx
+      .delete(shaPaymentReconciliation)
+      .where(eq(shaPaymentReconciliation.facilityId, facilityId));
+    await tx.delete(shaWaivers).where(eq(shaWaivers.facilityId, facilityId));
+    await tx.delete(shaEligibilityChecks).where(eq(shaEligibilityChecks.facilityId, facilityId));
+    await tx.delete(benefitPackageItems).where(eq(benefitPackageItems.facilityId, facilityId));
+    await tx.delete(benefitPackages).where(eq(benefitPackages.facilityId, facilityId));
+    await tx.delete(shaEmpanelments).where(eq(shaEmpanelments.facilityId, facilityId));
+
     await tx.delete(remittances).where(eq(remittances.facilityId, facilityId));
     await tx.delete(claimLines).where(eq(claimLines.facilityId, facilityId));
     await tx.delete(claims).where(eq(claims.facilityId, facilityId));

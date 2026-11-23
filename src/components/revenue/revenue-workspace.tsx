@@ -7,8 +7,10 @@ import {
   FileClock,
   RefreshCw,
   ReceiptText,
+  ShieldCheck,
   Users,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -250,6 +252,14 @@ export function RevenueWorkspace({ canWrite }: { canWrite: boolean }) {
           <RefreshCw className="size-4" aria-hidden="true" />
           Refresh
         </button>
+        <Link
+          href="/finance/revenue/sha"
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--brand-mint)] bg-secondary px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+          data-testid="revenue-sha-workspace-link"
+        >
+          <ShieldCheck className="size-4" aria-hidden="true" />
+          SHA / SHIF workspace
+        </Link>
         <p className="ml-auto text-xs text-muted-foreground">
           Filters apply to claims, remittances and denials.
         </p>

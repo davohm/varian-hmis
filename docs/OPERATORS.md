@@ -252,3 +252,83 @@ and re-applies the obviously invented KMPDC, ODPC, SHA, PPB, KMLTTB, RPB, qualit
 values. `FAM` remains empty where regulator values are unconfirmed; enter those only from documents
 supplied by the facility. Document upload is not implemented yet — use **Document reference** to
 point to the signed source.
+
+## 11. SHA / SHIF revenue cycle
+
+The SHA workspace is at `/finance/revenue/sha`, linked from Finance → Revenue cycle. It supports the
+SHA funds `phf`, `shif` and `eccif`. Every regulator-supplied value (KMPDC number, scheme code,
+contract number, tariff version, benefit coverage, co-pay percentages, pre-authorisation thresholds
+and adjudication codes) is entered by an administrator from SHA documentation. The system supplies
+only safe defaults and never guesses an unconfirmed regulator value.
+
+### One-time setup
+
+1. On **Admin → Regulatory**, enter the facility's KMPDC number and keep the facility licence
+   active. `createEmpanelment` refuses to save an empanelment without both.
+2. In **Empanelment**, record the fund, scheme code/name, contract number, effective dates, tariff
+   version and optional quality-certification details. An empanelment can be suspended, expired or
+   terminated; closing requires a reason, and a terminated empanelment cannot be reopened.
+3. In **Eligibility → Benefit packages**, record the package, care type, effective period and its
+   itemised services. Each item declares `coverage` (`full`, `partial` or `excluded`), unit price,
+   co-pay percentage, and optional `requiresPreauth` / `preauthThreshold` values.
+4. Seed the facility's SHA adjudication codes (approved, reduced, rejected, info) from SHA's
+   published reason list. Denials cannot be recorded with an unconfigured code.
+
+### Roles and separation of duties
+
+| Role | SHA access |
+| --- | --- |
+| `revenue_cycle_officer` | Owns the workspace: setup, eligibility, pre-auth, claims, denials and rework |
+| `finance_officer`, `accountant` | Read access plus remittance and reconciliation |
+| `cashier` | Verifies eligibility and records patient co-pay |
+| `admin` | Full access |
+
+Separation of duties is enforced in the command layer, not only in the UI: a claim preparer cannot
+submit or adjudicate that claim, a claim approver cannot record its remittance, a pre-auth requester
+cannot decide their own request, and a waiver requester cannot approve or use their own waiver.
+
+### Daily flow
+
+1. **Eligibility** — record the SHA check result against the patient, payer and empanelment. A valid
+   `payer_sharing` consent is required before any claim shares patient data with the payer.
+2. **Pre-authorisation** — request and approve an authorisation for expensive or preauth-required
+   lines. The claim builder shows per-line coverage (covered / co-pay / excluded / pre-auth
+   required) before submission.
+3. **Claims** — build the claim from an encounter and an SHA-claimable invoice. Excluded or unlisted
+   lines are rejected unless explicitly marked patient-pay, in which case they become co-pay and are
+   never billed to SHA. Line amounts reconcile to the cent. Submission allocates
+   `shaClaimRef = SHA-<claimNo>` exactly once; rework copies it unchanged to a new linked draft.
+4. **Denials** — record the configured rejection code, reason and optional line. Rework creates a new
+   draft via `supersedes_claim_id`; the original claim is never edited.
+5. **Remittances** — allocate each receipt to claim lines and sum to the receipt amount. A payment
+   above the approved balance is refused and audited until an independent approver approves a
+   waiver/exemption covering the excess.
+6. **Reconciliation** — import the SHA payment report by KMPDC number and period. Lines match on
+   KMPDC + period + `shaClaimRef`; unmatched cash stays as a variance row and is never silently
+   written off. The screen shows SHA reported vs facility invoiced vs matched vs variance. Cash is
+   posted to the general ledger only when it has not already been posted by a remittance carrying
+   the same report reference.
+
+Claim and remittance documents are print-ready from the workspace and include the facility,
+empanelment, claim/remittance references, line coverage and totals.
+
+### Controls and verification
+
+All SHA writes go through `src/server/commands/sha.ts` with an idempotency key, one transaction, an
+audit row and a sync outbox row. There are no hard deletes of SHA clinical or financial records.
+Replaying a command with the same idempotency key returns the original result.
+
+Migrations `0034_wild_phil_sheldon.sql`, `0035_rapid_spiral.sql` and `0036_curly_jane_foster.sql`
+install the SHA schema on local and cloud databases. Verify after a release with:
+
+```bash
+npx tsc --noEmit
+npm run lint
+npm run build
+$env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/varian-hmis-db'; $env:DIRECT_DATABASE_URL='postgresql://postgres:postgres@localhost:5432/varian-hmis-db'; npm test
+```
+
+Never run the test suite against the Neon connection string. `tests/sha.test.ts` covers all 15
+Prompt 22 business rules and the full eligibility → pre-auth → claim → adjudication → remittance →
+ledger posting → reconciliation journey with a balanced trial balance. Authenticated screenshots and
+a changelog entry are N/A for this backend/admin ERP phase.

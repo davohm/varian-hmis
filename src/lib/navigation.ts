@@ -184,6 +184,44 @@ export const REVENUE_WRITE_ROLES: Role[] = [
   "super_admin",
 ];
 
+/** SHA/SHIF revenue cycle: revenue owns claims, finance owns cash and reconciliation. */
+export const SHA_READ_ROLES: Role[] = [...REVENUE_READ_ROLES];
+
+export const SHA_SETUP_ROLES: Role[] = ["revenue_cycle_officer", "admin", "super_admin"];
+
+export const SHA_ELIGIBILITY_ROLES: Role[] = [
+  "cashier",
+  "revenue_cycle_officer",
+  "admin",
+  "super_admin",
+];
+
+export const SHA_APPROVAL_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "admin",
+  "super_admin",
+];
+
+export const SHA_CLAIM_ROLES: Role[] = ["revenue_cycle_officer", "admin", "super_admin"];
+
+export const SHA_FINANCE_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "admin",
+  "super_admin",
+];
+
+export const SHA_WRITE_ROLES: Role[] = Array.from(
+  new Set<Role>([
+    ...SHA_SETUP_ROLES,
+    ...SHA_ELIGIBILITY_ROLES,
+    ...SHA_APPROVAL_ROLES,
+    ...SHA_CLAIM_ROLES,
+    ...SHA_FINANCE_ROLES,
+  ]),
+);
+
 /** Procurement and stock roles may read purchasing documents and inventory reports. */
 export const PROCUREMENT_READ_ROLES: Role[] = [
   "accountant",

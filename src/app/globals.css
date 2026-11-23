@@ -328,6 +328,43 @@
     cursor: default !important;
     padding: 0 !important;
   }
+
+  /* SHA claim and remittance documents print on their own sheets. */
+  body:has(.sha-document) .sha-hide-print,
+  body:has(.sha-document) header,
+  body:has(.sha-document) aside,
+  body:has(.sha-document) nav {
+    display: none !important;
+  }
+
+  .sha-document {
+    color: #000 !important;
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 9pt !important;
+  }
+
+  .sha-document-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+    word-break: break-word;
+  }
+
+  .sha-document-table th,
+  .sha-document-table td {
+    border: 0.5pt solid #000 !important;
+    padding: 2pt 3pt !important;
+    color: #000 !important;
+    background: transparent !important;
+    font-size: 8pt !important;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
 }
 
 /* ==========================================================================
