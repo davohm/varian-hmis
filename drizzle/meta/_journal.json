@@ -232,6 +232,13 @@
       "when": 1795365112003,
       "tag": "0032_foamy_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795422273817,
+      "tag": "0033_bored_miracleman",
+      "breakpoints": true
     }
   ]
 }

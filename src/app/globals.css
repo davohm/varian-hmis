@@ -275,6 +275,59 @@
   thead {
     display: table-header-group;
   }
+
+  /* MOH statutory sheet: print only the sheet, ink on paper. */
+  body:has(.moh-sheet) .moh-hide-print,
+  body:has(.moh-sheet) header,
+  body:has(.moh-sheet) aside,
+  body:has(.moh-sheet) nav {
+    display: none !important;
+  }
+
+  .moh-sheet {
+    color: #000 !important;
+    background: #fff !important;
+    font-size: 9pt !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .moh-sheet .text-muted-foreground {
+    color: #000 !important;
+  }
+
+  .moh-sheet-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+    word-break: break-word;
+  }
+
+  .moh-sheet-table th,
+  .moh-sheet-table td {
+    border: 0.5pt solid #000 !important;
+    padding: 2pt 3pt !important;
+    color: #000 !important;
+    background: transparent !important;
+    font-size: 8pt !important;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .moh-sheet-table tr {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
+  .moh-cell-drill {
+    color: #000 !important;
+    text-decoration: none !important;
+    cursor: default !important;
+    padding: 0 !important;
+  }
 }
 
 /* ==========================================================================

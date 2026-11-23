@@ -18,8 +18,8 @@ import {
 
 import { newId } from "../../../lib/uuid";
 
-import { encounters } from "./patients";
-import { auditColumns, facilities, stores } from "./tenancy";
+import { encounters, patients } from "./patients";
+import { auditColumns, branches, facilities, stores } from "./tenancy";
 
 export const labOrderStatusEnum = pgEnum("lab_order_status", [
   "ordered",
@@ -423,6 +423,94 @@ export const stockBalances = pgView("stock_balances").as((qb) =>
       stockLedger.batchId,
     ),
 );
+
+/** MOH 710A/EPI immunisations recorded against a patient visit. */
+export const immunizationStatusEnum = pgEnum("immunization_status", ["administered", "void"]);
+
+export const immunizations = pgTable(
+  "immunizations",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    branchId: uuid("branch_id")
+      .notNull()
+      .references(() => branches.id, { onDelete: "restrict" }),
+    encounterId: uuid("encounter_id").references(() => encounters.id, { onDelete: "restrict" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    itemId: uuid("item_id").references(() => items.id, { onDelete: "restrict" }),
+    batchId: uuid("batch_id").references(() => itemBatches.id, { onDelete: "restrict" }),
+    antigenCode: varchar("antigen_code", { length: 32 }).notNull(),
+    doseCode: varchar("dose_code", { length: 32 }).notNull(),
+    administeredAt: timestamp("administered_at", { withTimezone: true }).notNull().defaultNow(),
+    status: immunizationStatusEnum("status").notNull().default("administered"),
+    notes: text("notes"),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityDateIdx: index("immunizations_facility_date_idx").on(table.facilityId, table.administeredAt),
+    facilityAntigenIdx: index("immunizations_facility_antigen_idx").on(table.facilityId, table.antigenCode, table.administeredAt),
+    encounterIdx: index("immunizations_encounter_idx").on(table.facilityId, table.encounterId),
+  }),
+);
+
+/** MOH 735/416 eye clinic assessment supporting the statutory summaries. */
+export const eyeVisitTypeEnum = pgEnum("eye_visit_type", ["new", "revisit", "review", "walk_in"]);
+export const eyeVisualAcuityEnum = pgEnum("eye_visual_acuity", ["normal", "low_vision", "blind"]);
+
+export const eyeAssessments = pgTable(
+  "eye_assessments",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    branchId: uuid("branch_id")
+      .notNull()
+      .references(() => branches.id, { onDelete: "restrict" }),
+    encounterId: uuid("encounter_id")
+      .notNull()
+      .references(() => encounters.id, { onDelete: "restrict" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    visitedAt: timestamp("visited_at", { withTimezone: true }).notNull().defaultNow(),
+    visitType: eyeVisitTypeEnum("visit_type").notNull().default("new"),
+    visualAcuity: eyeVisualAcuityEnum("visual_acuity").notNull().default("normal"),
+    vaRight: varchar("va_right", { length: 32 }),
+    vaLeft: varchar("va_left", { length: 32 }),
+    disabilityType: text("disability_type"),
+    diagnosisCode: varchar("diagnosis_code", { length: 64 }).notNull(),
+    impression: text("impression"),
+    management: text("management"),
+    referral: text("referral"),
+    county: text("county"),
+    residence: text("residence"),
+    phone: varchar("phone", { length: 30 }),
+    registeredBy: text("registered_by"),
+    seenBy: text("seen_by"),
+    timeRegistered: timestamp("time_registered", { withTimezone: true }),
+    timeSeen: timestamp("time_seen", { withTimezone: true }),
+    lastStage: varchar("last_stage", { length: 64 }),
+    admittedAt: timestamp("admitted_at", { withTimezone: true }),
+    dischargedAt: timestamp("discharged_at", { withTimezone: true }),
+    notes: text("notes"),
+    ...auditColumns,
+  },
+  (table) => ({
+    facilityDateIdx: index("eye_assessments_facility_date_idx").on(table.facilityId, table.visitedAt),
+    encounterIdx: uniqueIndex("eye_assessments_encounter_idx").on(table.facilityId, table.encounterId),
+    diagnosisIdx: index("eye_assessments_diagnosis_idx").on(table.facilityId, table.diagnosisCode, table.visitedAt),
+  }),
+);
+
+export type Immunization = typeof immunizations.$inferSelect;
+export type NewImmunization = typeof immunizations.$inferInsert;
+export type EyeAssessment = typeof eyeAssessments.$inferSelect;
+export type NewEyeAssessment = typeof eyeAssessments.$inferInsert;
 
 export type ItemBatch = typeof itemBatches.$inferSelect;
 export type NewItemBatch = typeof itemBatches.$inferInsert;

@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { reportDataToCsv, type ErpReportFilters } from "@/lib/erp-reporting";
-import type { ErpReportCode } from "@/lib/reporting";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatMoney, type MohReportCellRow, type MohReportRunRow, type ReportsApiData } from "@/components/reports/reports-types";
+import { formatMoney, type MohReportCellRow, type MohReportMeta, type MohReportRunRow, type ReportsApiData } from "@/components/reports/reports-types";
 import { useReportsCommand } from "@/components/reports/use-reports-command";
 
 function todayIso() {
@@ -23,6 +22,174 @@ function downloadCsv(filename: string, csv: string) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function formatPeriod(meta: MohReportMeta | null, run: MohReportRunRow | null) {
+  if (!meta && !run) return "—";
+  const m = meta;
+  const periodType = m?.periodType ?? (run?.epiWeek ? "epi_week" : "month");
+  if (periodType === "epi_week") {
+    const wk = m?.epiWeek ?? run?.epiWeek;
+    const yr = m?.epiYear ?? run?.epiYear;
+    return wk && yr ? `Epi week ${wk} / ${yr}` : `${m?.periodStart ?? run?.periodStart ?? ""} to ${m?.periodEnd ?? run?.periodEnd ?? ""}`;
+  }
+  if (periodType === "month") {
+    const month = m?.month ?? run?.month;
+    const year = m?.year ?? run?.year;
+    if (month && year) return new Date(year, month - 1, 1).toLocaleString("en-KE", { month: "long", year: "numeric" });
+  }
+  return `${m?.periodStart ?? run?.periodStart ?? ""} to ${m?.periodEnd ?? run?.periodEnd ?? ""}`;
+}
+
+const MOH_SECTION_LABELS: Record<string, string> = {
+  A: "Section A", B: "Section B", B_ADULT: "Adults", B_PAEDS: "Paediatrics", SUMMARY: "Summary",
+  REGISTER: "Register", QUEUE: "Queue", AGE: "Age", VISUAL_ACUITY: "Visual acuity",
+  DIAGNOSIS: "Diagnosis", RESIDENCY: "Residency", DOCTORS: "Doctors", BRANCHES: "Branches",
+};
+
+function sectionLabel(key: string | null) {
+  if (!key) return "Report";
+  return MOH_SECTION_LABELS[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function displayCellValue(cell: MohReportCellRow | undefined) {
+  if (!cell) return "";
+  if (cell.valueText != null && cell.valueText !== "") return cell.valueText;
+  if (cell.valueNumeric == null || cell.valueNumeric === "") return "";
+  const n = Number(cell.valueNumeric);
+  if (!Number.isFinite(n)) return String(cell.valueNumeric);
+  return Number.isInteger(n) ? String(n) : String(n);
+}
+
+function MohStatutorySheet({
+  meta, run, cells, onDrill,
+}: {
+  meta: MohReportMeta | null;
+  run: MohReportRunRow | null;
+  cells: MohReportCellRow[];
+  onDrill: (rowCode: string, colKey: string) => void;
+}) {
+  const sections = useMemo(() => {
+    const ordered: Array<{ key: string; cells: MohReportCellRow[] }> = [];
+    const byKey = new Map<string, MohReportCellRow[]>();
+    for (const cell of [...cells].sort((a, b) => a.sortOrder - b.sortOrder)) {
+      const key = cell.section ?? "__default__";
+      if (!byKey.has(key)) {
+        const arr: MohReportCellRow[] = [];
+        byKey.set(key, arr);
+        ordered.push({ key, cells: arr });
+      }
+      byKey.get(key)!.push(cell);
+    }
+    return ordered.map((section) => {
+      const colKeys: string[] = [];
+      const colLabels = new Map<string, string>();
+      const rows: Array<{ rowCode: string; rowLabel: string; isTotal: boolean; byCol: Map<string, MohReportCellRow> }> = [];
+      const rowMap = new Map<string, (typeof rows)[number]>();
+      for (const cell of section.cells) {
+        const colKey = cell.colKey ?? "value";
+        if (!colKeys.includes(colKey)) {
+          colKeys.push(colKey);
+          colLabels.set(colKey, cell.colLabel ?? colKey);
+        }
+        const rowCode = cell.rowCode ?? `__row_${cell.id}`;
+        let row = rowMap.get(rowCode);
+        if (!row) {
+          row = { rowCode, rowLabel: cell.rowLabel ?? rowCode, isTotal: Boolean(cell.isTotal), byCol: new Map() };
+          rowMap.set(rowCode, row);
+          rows.push(row);
+        }
+        row.byCol.set(colKey, cell);
+        if (cell.isTotal) row.isTotal = true;
+        if (cell.rowLabel) row.rowLabel = cell.rowLabel;
+      }
+      return { key: section.key, colKeys, colLabels, rows };
+    });
+  }, [cells]);
+
+  const period = formatPeriod(meta, run);
+  const facilityName = meta?.facilityName ?? "Facility";
+  const reportTitle = meta?.reportName ?? run?.reportName ?? "MOH Report";
+  const reportCode = meta?.reportCode ?? run?.reportCode ?? "";
+
+  return (
+    <div className="moh-sheet space-y-4 rounded-md border bg-white p-4 text-black print:border-0 print:p-0">
+      <div className="space-y-1 border-b pb-3 text-center">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground print:text-black">Ministry of Health / Statutory Return</div>
+        <h3 className="text-lg font-semibold leading-tight">{reportTitle} {reportCode ? <span className="text-muted-foreground print:text-black">({reportCode})</span> : null}</h3>
+        <div className="text-sm">{facilityName}{meta?.branchName ? ` — ${meta.branchName}` : ""}</div>
+      </div>
+
+      <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4 print:grid-cols-4">
+        <div><span className="text-muted-foreground print:text-black">County:</span> {meta?.county ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">Sub-county:</span> {meta?.subCounty ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">Ward:</span> {meta?.ward ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">MFL/KMHFL:</span> {meta?.kmhflId ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">Period:</span> {period}</div>
+        <div><span className="text-muted-foreground print:text-black">Dates:</span> {meta?.periodStart ?? run?.periodStart ?? "—"} to {meta?.periodEnd ?? run?.periodEnd ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">Epi week/year:</span> {meta?.epiWeek ?? run?.epiWeek ?? "—"} / {meta?.epiYear ?? run?.epiYear ?? "—"}</div>
+        <div><span className="text-muted-foreground print:text-black">Status:</span> {meta?.status ?? run?.status ?? "—"}</div>
+      </div>
+
+      {sections.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No cells for this run.</p>
+      ) : sections.map((section) => (
+        <div key={section.key} className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground print:text-black">{sectionLabel(section.key === "__default__" ? null : section.key)}</div>
+          <div className="overflow-x-auto">
+            <table className="moh-sheet-table w-full border-collapse text-[11px]" data-testid={section.key === sections[0]?.key ? "moh-cells-table" : undefined}>
+              <thead>
+                <tr>
+                  <th className="border px-1.5 py-1 text-left font-medium">Row</th>
+                  {section.colKeys.map((colKey) => <th key={colKey} className="border px-1.5 py-1 text-left font-medium">{section.colLabels.get(colKey) ?? colKey}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {section.rows.map((row) => (
+                  <tr key={row.rowCode} className={row.isTotal ? "bg-muted/20 font-medium print:bg-transparent" : ""}>
+                    <td className="border px-1.5 py-1 align-top">{row.rowLabel}</td>
+                    {section.colKeys.map((colKey) => {
+                      const cell = row.byCol.get(colKey);
+                      const value = displayCellValue(cell);
+                      const canDrill = Boolean(cell?.rowCode && cell?.colKey);
+                      return (
+                        <td key={colKey} className={`border px-1.5 py-1 align-top ${/^-?\d/.test(value) ? "text-right tabular-nums" : ""}`}>
+                          {canDrill ? (
+                            <button type="button" className="moh-cell-drill w-full text-inherit underline-offset-2 hover:underline print:no-underline" onClick={() => onDrill(cell!.rowCode!, cell!.colKey!)}>
+                              {value || "—"}
+                            </button>
+                          ) : (value || "")}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+
+      <div className="grid gap-4 border-t pt-3 text-xs sm:grid-cols-2 print:grid-cols-2">
+        <div className="space-y-1">
+          <div className="font-medium">Submitted By</div>
+          <div>Name: {meta?.submittedBy ?? "____________________________"}</div>
+          <div>Signature: ____________________________</div>
+          <div>Date: {meta?.submittedAt ? new Date(meta.submittedAt).toLocaleDateString("en-KE") : "____________________________"}</div>
+        </div>
+        <div className="space-y-1">
+          <div className="font-medium">Received By</div>
+          <div>Name: ____________________________</div>
+          <div>Signature: ____________________________</div>
+          <div>Date / Ref: {meta?.acknowledgementRef ?? "____________________________"}</div>
+        </div>
+      </div>
+
+      <div className="text-[10px] text-muted-foreground print:text-black">
+        Generated: {meta?.generatedAt ? new Date(meta.generatedAt).toLocaleString("en-KE") : "—"} · Checksum: {meta?.checksum ?? run?.checksum ?? "—"}
+      </div>
+    </div>
+  );
 }
 function isMohCode(code: string) { return /^MOH\d/.test(code); }
 
@@ -72,6 +239,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
   const drillDown = data?.drillDown;
   const mohRuns = (data?.mohRuns ?? []) as MohReportRunRow[];
   const mohCells = (data?.mohCells ?? []) as MohReportCellRow[];
+  const mohMeta = (data?.mohMeta ?? null) as MohReportMeta | null;
   const selectedRun = mohRuns.find((r) => r.id === selectedRunId) ?? null;
 
   async function handleGenerateErp() { await run("generateErpReport", { reportCode, filters }, "Report generated"); }
@@ -124,7 +292,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {commandError ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{commandError}</div> : null}
       <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card>
+        <Card className="moh-hide-print">
           <CardHeader>
             <CardTitle>Report catalogue</CardTitle>
             <CardDescription>ERP and MOH statutory reports from posted source records.</CardDescription>
@@ -151,6 +319,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
               {moh ? <Button variant="outline" onClick={() => void handleExportMoh("csv")} disabled={busy || !selectedRunId}>Export CSV</Button> : null}
               {moh ? <Button variant="outline" onClick={() => void handleExportMoh("xlsx")} disabled={busy || !selectedRunId}>Export XLSX</Button> : null}
               {moh ? <Button variant="outline" onClick={() => void handleExportMoh("pdf")} disabled={busy || !selectedRunId}>Print/PDF</Button> : null}
+              {moh ? <Button variant="outline" onClick={() => window.print()} disabled={!selectedRunId || mohCells.length === 0}>Print sheet</Button> : null}
             </div>
             {!moh && canWrite ? (
               <div className="space-y-2 border-t pt-4">
@@ -193,7 +362,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
 
         <div className="space-y-6">
           <Card>
-            <CardHeader>
+            <CardHeader className="moh-hide-print">
               <CardTitle>{moh ? (data?.catalogue?.find((c) => c.reportCode === reportCode)?.name ?? reportCode) : (report?.name ?? "Report")}</CardTitle>
               <CardDescription>
                 {moh ? (selectedRun ? `${selectedRun.periodStart} to ${selectedRun.periodEnd} • ${selectedRun.status}${selectedRun.checksum ? ` • checksum ${selectedRun.checksum.slice(0, 12)}` : ""}` : "Generate or select a MOH run.") : (report ? `${report.from} to ${report.to} • ${report.reconciled ? "Reconciled" : "Needs review"}` : "Select a report to load data.")}
@@ -222,33 +391,19 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
               ) : null}
               {!loading && moh ? (
                 <div className="space-y-4">
-                  <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-                    MOH statutory run. Backend generates cells, checksum, audit trail, and status transitions. Exact MOH sheet print layout and XLSX/PDF parity are still being completed.
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs" data-testid="moh-cells-table">
-                      <thead><tr className="border-b text-left"><th className="px-2 py-1">Section</th><th className="px-2 py-1">Row</th><th className="px-2 py-1">Col</th><th className="px-2 py-1 text-right">Value</th><th className="px-2 py-1">Source</th></tr></thead>
-                      <tbody>
-                        {mohCells.map((c) => (
-                          <tr key={c.id} className={`border-b last:border-0 ${c.isTotal ? "font-medium bg-muted/20" : ""} cursor-pointer hover:bg-muted/30`} onClick={async () => {
-                            if (!selectedRunId || !c.rowCode || !c.colKey) return;
-                            const res = await fetch(`/api/reports?runId=${encodeURIComponent(selectedRunId)}&drillRowCode=${encodeURIComponent(c.rowCode)}&drillColKey=${encodeURIComponent(c.colKey)}`, { cache: "no-store" });
-                            const payload = await res.json().catch(() => null);
-                            setMohDrill({ rowCode: c.rowCode, colKey: c.colKey, data: payload?.cell ?? payload });
-                          }}>
-                            <td className="px-2 py-1">{c.section ?? ""}</td>
-                            <td className="px-2 py-1">{c.rowCode ?? ""} {c.rowLabel ?? ""}</td>
-                            <td className="px-2 py-1">{c.colKey ?? ""}</td>
-                            <td className="px-2 py-1 text-right tabular-nums">{c.valueNumeric ?? c.valueText ?? ""}</td>
-                            <td className="px-2 py-1 text-muted-foreground">{c.sourceQuery ? "view source" : ""}</td>
-                          </tr>
-                        ))}
-                        {selectedRunId && mohCells.length === 0 ? <tr><td className="px-2 py-3 text-muted-foreground" colSpan={5}>No cells for this run.</td></tr> : null}
-                      </tbody>
-                    </table>
-                  </div>
+                  <MohStatutorySheet
+                    meta={mohMeta}
+                    run={selectedRun}
+                    cells={mohCells}
+                    onDrill={async (rowCode, colKey) => {
+                      if (!selectedRunId) return;
+                      const res = await fetch(`/api/reports?runId=${encodeURIComponent(selectedRunId)}&drillRowCode=${encodeURIComponent(rowCode)}&drillColKey=${encodeURIComponent(colKey)}`, { cache: "no-store" });
+                      const payload = await res.json().catch(() => null);
+                      setMohDrill({ rowCode, colKey, data: payload?.cell ?? payload });
+                    }}
+                  />
                   {mohDrill ? (
-                    <div className="rounded-md border bg-muted/10 p-3 text-xs space-y-2">
+                    <div className="moh-hide-print rounded-md border bg-muted/10 p-3 text-xs space-y-2">
                       <div className="flex items-center justify-between"><div className="font-medium">Source drill-down: {mohDrill.rowCode} / {mohDrill.colKey}</div><Button size="sm" variant="ghost" onClick={() => setMohDrill(null)}>Close</Button></div>
                       <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(mohDrill.data, null, 2)}</pre>
                     </div>
@@ -258,7 +413,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
             </CardContent>
           </Card>
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          <div className="moh-hide-print grid gap-6 xl:grid-cols-2">
             <Card>
               <CardHeader><CardTitle>Approval inbox</CardTitle><CardDescription>Pending approvals across finance, procurement, payroll and assets.</CardDescription></CardHeader>
               <CardContent className="space-y-3">

@@ -9,7 +9,7 @@ import { requireApiFacility } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
 import { db } from "@/server/db/client";
 import { archiveReportView, createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateErpReport, generateReportRun, markReportExported, regenerateReportRun, saveReportView, submitNotifiableEvent, submitReportRun, voidReportRun } from "@/server/commands/reporting";
-import { getApprovalInbox, getErpReportData, getReportDrillDown, getReportCells, getReportRunAuditTrail, listReportCatalogue, listReportRuns, listSavedReportViews } from "@/server/queries/reporting";
+import { getApprovalInbox, getErpReportData, getReportDrillDown, getReportCells, getReportRunAuditTrail, getReportRunMeta, listReportCatalogue, listReportRuns, listSavedReportViews } from "@/server/queries/reporting";
 import { handleErpCommand } from "./_shared";
 
 export const dynamic = "force-dynamic";
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       const mapped = cells.map((c) => ({ section: c.section, rowCode: c.rowCode, rowLabel: c.rowLabel, colKey: c.colKey, colLabel: c.colLabel, valueNumeric: c.valueNumeric, valueText: c.valueText, sortOrder: c.sortOrder, isTotal: c.isTotal }));
       const checksum = exportChecksum(mapped);
       const periodLabel = `${run.periodStart} to ${run.periodEnd}`;
-      const meta = { facilityName: facility?.name ?? null, county: (profile?.county as string | null) ?? null, subCounty: (profile?.subCounty as string | null) ?? null, ward: (profile?.ward as string | null) ?? null, mflCode: (profile?.mflCode as string | null) ?? (profile?.facilityRegistryId as string | null) ?? null, epiWeek: run.epiWeek != null ? String(run.epiWeek) : null, epiYear: run.epiYear ?? null, weekEnding: run.periodEnd ?? null, month: run.periodStart ? String(run.periodStart).slice(0, 7) : null, year: run.periodStart ? Number(String(run.periodStart).slice(0, 4)) : null };
+      const meta = { facilityName: facility?.name ?? null, county: (profile?.county as string | null) ?? null, subCounty: (profile?.subCounty as string | null) ?? null, ward: (profile?.ward as string | null) ?? null, mflCode: (profile?.kmhflId as string | null) ?? (profile?.mflCode as string | null) ?? (profile?.facilityRegistryId as string | null) ?? null, epiWeek: run.epiWeek != null ? String(run.epiWeek) : null, epiYear: run.epiYear ?? null, weekEnding: run.periodEnd ?? null, month: run.periodStart ? String(run.periodStart).slice(0, 7) : null, year: run.periodStart ? Number(String(run.periodStart).slice(0, 4)) : null };
       const filename = `${cat?.reportCode ?? "report"}-${run.periodEnd}.${exportFormat}`;
       if (exportFormat === "csv") {
         return new NextResponse(cellsToCsv(mapped), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unsupported export format" }, { status: 400 });
     }
 
-    const [catalogue, savedViews, approvalInbox, reportData, drillDown, mohRuns, mohCells, mohAuditTrail] = await Promise.all([
+    const [catalogue, savedViews, approvalInbox, reportData, drillDown, mohRuns, mohCells, mohAuditTrail, mohMeta] = await Promise.all([
       listReportCatalogue(db),
       listSavedReportViews(db, facilityId, staff.user.id, reportCode),
       getApprovalInbox(db, facilityId),
@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
       listReportRuns(db, facilityId, { reportCode: reportCodeParam, limit: 50 }),
       runId ? getReportCells(db, facilityId, runId) : Promise.resolve([]),
       runId ? getReportRunAuditTrail(db, facilityId, runId) : Promise.resolve([]),
+      runId ? getReportRunMeta(db, facilityId, runId) : Promise.resolve(null),
     ]);
 
     return NextResponse.json({
@@ -116,6 +117,7 @@ export async function GET(request: NextRequest) {
       mohRuns,
       mohCells,
       mohAuditTrail,
+      mohMeta,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {

@@ -24,6 +24,141 @@ export interface MohReportTemplate {
   sections: Array<{ key: string; label: string; rows: Array<{ rowCode: string; rowLabel: string; isTotal?: boolean; formula?: string }>; columns: Array<{ colKey: string; colLabel: string }> }>;
 }
 
+/** Controlled antigen vocabulary shared by the 710A dose grid and 710B movement ledger. */
+export const MOH710B_ANTIGENS = ["BCG", "OPV", "IPV", "DPT+HIB+HEPB", "Pneumococcal", "Rota", "Vitamin A", "Yellow Fever", "Measles", "Tetanus toxoid"] as const;
+
+const IMMUNIZATION_DOSE_ALIASES: Record<string, string> = {
+  bcg: "BCG",
+  opv0: "OPV0", "opv at birth": "OPV0", "opv birth": "OPV0", "opv within two weeks": "OPV0",
+  ipv: "IPV", "ipv given with opv3": "IPV",
+  vita: "VITA", "vitamin a": "VITA",
+  yf: "YF", "yellow fever": "YF",
+};
+
+for (let n = 1; n <= 3; n++) {
+  IMMUNIZATION_DOSE_ALIASES[`opv${n}`] = `OPV${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`penta${n}`] = `PENTA${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`dpt hib hepb${n}`] = `PENTA${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`dpt${n}`] = `PENTA${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`pcv${n}`] = `PCV${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`pneumococcal${n}`] = `PCV${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`rota${n}`] = `ROTA${n}`;
+}
+for (let n = 1; n <= 2; n++) {
+  IMMUNIZATION_DOSE_ALIASES[`mr${n}`] = `MR${n}`;
+  IMMUNIZATION_DOSE_ALIASES[`measles${n}`] = `MR${n}`;
+}
+for (let n = 1; n <= 5; n++) IMMUNIZATION_DOSE_ALIASES[`tt${n}`] = `TT${n}`;
+
+function normalizeText(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s_]+/g, " ").replace(/[^a-z0-9+]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Map an operational immunisation code/name to a MOH 710A row code. */
+export function normalizeImmunizationDoseCode(value: string | null | undefined): string | null {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  const key = raw.replace(/\+/g, " ").replace(/\s+/g, " ").trim();
+  if (IMMUNIZATION_DOSE_ALIASES[key]) return IMMUNIZATION_DOSE_ALIASES[key];
+  if (/\bbcg\b/.test(key)) return "BCG";
+  if (/\bipv\b/.test(key)) return "IPV";
+  if (/\bopv\b/.test(key)) {
+    const n = key.match(/\bopv\s*([0-3])\b/)?.[1];
+    return `OPV${n ?? "0"}`;
+  }
+  if (/\bpenta\b|\bdpt\b|\bhib\b|\bhepb\b/.test(key)) {
+    const n = key.match(/([1-3])/)?.[1] ?? "1";
+    return `PENTA${n}`;
+  }
+  if (/\bpcv\b|pneumococcal/.test(key)) {
+    const n = key.match(/([1-3])/)?.[1] ?? "1";
+    return `PCV${n}`;
+  }
+  if (/\brota\b/.test(key)) {
+    const n = key.match(/([1-3])/)?.[1] ?? "1";
+    return `ROTA${n}`;
+  }
+  if (/vitamin\s*a|\bvita\b/.test(key)) return "VITA";
+  if (/yellow\s*fever|\byf\b/.test(key)) return "YF";
+  if (/measles|\bmr\b/.test(key)) {
+    const n = key.match(/([1-3])/)?.[1] ?? "1";
+    return `MR${n}`;
+  }
+  if (/tetanus|\btt\b/.test(key)) {
+    const n = key.match(/([1-5])/)?.[1] ?? "1";
+    return `TT${n}`;
+  }
+  return null;
+}
+
+/** Map an operational antigen/item to a MOH 710B antigen row family. */
+export function normalizeMoh710BAntigen(value: string | null | undefined): string | null {
+  const dose = normalizeImmunizationDoseCode(value);
+  if (dose === "BCG") return "BCG";
+  if (dose?.startsWith("OPV")) return "OPV";
+  if (dose === "IPV") return "IPV";
+  if (dose?.startsWith("PENTA")) return "DPT+HIB+HEPB";
+  if (dose?.startsWith("PCV")) return "Pneumococcal";
+  if (dose?.startsWith("ROTA")) return "Rota";
+  if (dose === "VITA") return "Vitamin A";
+  if (dose === "YF") return "Yellow Fever";
+  if (dose?.startsWith("MR")) return "Measles";
+  if (dose?.startsWith("TT")) return "Tetanus toxoid";
+  const raw = normalizeText(value);
+  if (/\bbcg\b/.test(raw)) return "BCG";
+  if (/\bopv\b/.test(raw)) return "OPV";
+  if (/\bipv\b/.test(raw)) return "IPV";
+  if (/penta|\bdpt\b|\bhib\b|\bhepb\b/.test(raw)) return "DPT+HIB+HEPB";
+  if (/pneumococcal|\bpcv\b/.test(raw)) return "Pneumococcal";
+  if (/\brota\b/.test(raw)) return "Rota";
+  if (/vitamin\s*a|\bvita\b/.test(raw)) return "Vitamin A";
+  if (/yellow\s*fever|\byf\b/.test(raw)) return "Yellow Fever";
+  if (/measles|\bmr\b/.test(raw)) return "Measles";
+  if (/tetanus|\btt\b/.test(raw)) return "Tetanus toxoid";
+  return null;
+}
+
+export const EYE_DIAGNOSIS_ROW_CODES = ["normal_eye", "amblyopia", "aphakia", "cataract", "cvi", "chalazion", "conj_growth", "conj_allergic", "conj_bacterial", "conj_fungal", "conj_viral", "corneal_scar", "corneal_ulcer", "corneal_fb", "glaucoma", "refractive", "uveitis", "other"] as const;
+
+const EYE_DIAGNOSIS_ALIASES: Record<string, string> = {
+  normal: "normal_eye", "normal eye": "normal_eye",
+  cvi: "cvi", "cerebral visual impairment": "cvi",
+  "conjunctival growths": "conj_growth", "conj growth": "conj_growth",
+  "corneal scar injury or infection": "corneal_scar", "corneal scar": "corneal_scar",
+  "corneal conjunctival fb": "corneal_fb", "corneal fb": "corneal_fb", "foreign body": "corneal_fb",
+  "refractive error": "refractive", "other eye conditions": "other",
+};
+
+/** Map an operational eye diagnosis code/name to a MOH 735 diagnosis row. */
+export function normalizeEyeDiagnosisCode(value: string | null | undefined): string | null {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  if (EYE_DIAGNOSIS_ALIASES[raw]) return EYE_DIAGNOSIS_ALIASES[raw]!;
+  if ((EYE_DIAGNOSIS_ROW_CODES as readonly string[]).includes(raw)) return raw;
+  const match = [
+    ["amblyopia", "amblyopia"], ["aphakia", "aphakia"], ["cataract", "cataract"], ["chalazion", "chalazion"],
+    ["allergic", "conj_allergic"], ["bacterial", "conj_bacterial"], ["fungal", "conj_fungal"], ["viral", "conj_viral"],
+    ["conjunctiv", "conj_viral"], ["ulcer", "corneal_ulcer"], ["glaucoma", "glaucoma"],
+    ["refractive", "refractive"], ["uveitis", "uveitis"],
+  ].find(([needle]) => raw.includes(needle));
+  return match?.[1] ?? "other";
+}
+
+export function normalizeEyeVisualAcuity(value: string | null | undefined): "normal" | "low_vision" | "blind" | null {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  if (/^(normal|6\/6|6\/6 6\/18|6 18)$/.test(raw) || raw.includes("normal")) return "normal";
+  if (/low vision|low|6 18 3 60|3 60/.test(raw)) return "low_vision";
+  if (/blind|npl|3 60 npl|no perception/.test(raw)) return "blind";
+  return null;
+}
+
+export function eyeAgeBand(age: number): "lt5" | "5_15" | "ge16" {
+  if (age < 5) return "lt5";
+  if (age < 16) return "5_15";
+  return "ge16";
+}
+
 export function monthDayColumns(year: number, month: number): Array<{ colKey: string; colLabel: string }> {
   const days = daysInMonth(year, month);
   const cols: Array<{ colKey: string; colLabel: string }> = [];
@@ -209,7 +344,7 @@ export function moh710ATemplate(year: number, month: number): MohReportTemplate 
 }
 
 export function moh710BTemplate(): MohReportTemplate {
-  const antigens = ["BCG", "OPV", "IPV", "DPT+HIB+HEPB", "Pneumococcal", "Rota", "Vitamin A", "Yellow Fever", "Measles", "Tetanus toxoid"];
+  const antigens = MOH710B_ANTIGENS;
   const rows = antigens.flatMap((ag) => [
     { rowCode: `${ag}:A`, rowLabel: `${ag} - [A] Doses in stock at beginning of month` },
     { rowCode: `${ag}:B`, rowLabel: `${ag} - [B] Doses received within the month` },
@@ -241,6 +376,28 @@ export function moh416Template(): MohReportTemplate {
         { rowCode: "total_seen", rowLabel: "Total seen" }, { rowCode: "total_not_seen", rowLabel: "Total not seen" },
         { rowCode: "direct_service", rowLabel: "Direct service patients" }, { rowCode: "net_seen", rowLabel: "Net patients seen/clerks", isTotal: true },
       ]},
+      { key: "DEPTS", label: "Depts breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: [
+        { rowCode: "new", rowLabel: "New" }, { rowCode: "revisit", rowLabel: "Revisit" }, { rowCode: "review", rowLabel: "Review" },
+        { rowCode: "walk_in", rowLabel: "Walk-In" }, { rowCode: "total", rowLabel: "Total", isTotal: true },
+      ]},
+      { key: "DOCTORS", label: "Doctors breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: [] },
+      { key: "DIAGNOSIS", label: "Diagnosis breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: [] },
+      { key: "RESIDENCY", label: "Patients residency breakdown", columns: [{ colKey: "value", colLabel: "Value" }, { colKey: "percent", colLabel: "Percentage" }], rows: [] },
+      { key: "BRANCHES", label: "Branches breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: [] },
+      { key: "QUEUE", label: "Queue stage breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: [
+        { rowCode: "waiting", rowLabel: "Waiting" }, { rowCode: "called", rowLabel: "Called" }, { rowCode: "in_service", rowLabel: "In service" },
+        { rowCode: "done", rowLabel: "Done" }, { rowCode: "cancelled", rowLabel: "Cancelled" },
+      ]},
+      { key: "AGE", label: "Age breakdown", columns: [{ colKey: "value", colLabel: "Value" }], rows: (["lt5", "5_15", "ge16"] as const).flatMap((age) =>
+        (["new", "revisit"] as const).flatMap((visit) => (["m", "f"] as const).map((sex) => ({
+          rowCode: `${age}_${visit}_${sex}`,
+          rowLabel: `${age === "lt5" ? "<5" : age === "5_15" ? "5-<16" : ">=16"} ${visit} ${sex === "m" ? "M" : "F"}`,
+        }))),
+      )},
+      { key: "VISUAL_ACUITY", label: "Visual acuity", columns: [{ colKey: "value", colLabel: "Value" }], rows: [
+        { rowCode: "low_vision_m", rowLabel: "Low vision M" }, { rowCode: "low_vision_f", rowLabel: "Low vision F" },
+        { rowCode: "blind_m", rowLabel: "Blind M" }, { rowCode: "blind_f", rowLabel: "Blind F" },
+      ]},
     ],
   };
 }
@@ -251,15 +408,16 @@ export function moh735Template(): MohReportTemplate {
     { colKey: "5_15_new_m", colLabel: "5-<16 New M" }, { colKey: "5_15_new_f", colLabel: "5-<16 New F" }, { colKey: "5_15_rev_m", colLabel: "5-<16 Revisits M" }, { colKey: "5_15_rev_f", colLabel: "5-<16 Revisits F" },
     { colKey: "ge16_new_m", colLabel: ">=16 New M" }, { colKey: "ge16_new_f", colLabel: ">=16 New F" }, { colKey: "ge16_rev_m", colLabel: ">=16 Revisits M" }, { colKey: "ge16_rev_f", colLabel: ">=16 Revisits F" },
   ];
-  const diagCols = [
-    { colKey: "normal_lt5_m", colLabel: "Normal <5 M" }, { colKey: "normal_lt5_f", colLabel: "Normal <5 F" },
-    { colKey: "lv_lt5_m", colLabel: "Low Vision <5 M" }, { colKey: "lv_lt5_f", colLabel: "Low Vision <5 F" },
-    { colKey: "blind_lt5_m", colLabel: "Blind <5 M" }, { colKey: "blind_lt5_f", colLabel: "Blind <5 F" },
-    { colKey: "normal_ge5_m", colLabel: "Normal >=5 M" }, { colKey: "normal_ge5_f", colLabel: "Normal >=5 F" },
-    { colKey: "lv_ge5_m", colLabel: "Low Vision >=5 M" }, { colKey: "lv_ge5_f", colLabel: "Low Vision >=5 F" },
-    { colKey: "blind_ge5_m", colLabel: "Blind >=5 M" }, { colKey: "blind_ge5_f", colLabel: "Blind >=5 F" },
-    { colKey: "total", colLabel: "Total" },
-  ];
+  const diagCols = (["lt5", "5_15", "ge16"] as const).flatMap((age) => {
+    const ageLabel = age === "lt5" ? "<5" : age === "5_15" ? "5-<16" : ">=16";
+    return (["normal", "lv", "blind"] as const).flatMap((acuity) => {
+      const acuityLabel = acuity === "normal" ? "Normal" : acuity === "lv" ? "Low Vision" : "Blind";
+      return ([["m", "M"], ["f", "F"]] as const).map(([sex, sexLabel]) => ({
+        colKey: `${acuity}_${age}_${sex}`,
+        colLabel: `${acuityLabel} ${ageLabel} ${sexLabel}`,
+      }));
+    });
+  }).concat([{ colKey: "total", colLabel: "Total" }]);
   const diagRows: Array<[string, string]> = [
     ["normal_eye", "Normal eye"], ["amblyopia", "Amblyopia"], ["aphakia", "Aphakia"], ["cataract", "Cataract"],
     ["cvi", "Cerebral Visual Impairment"], ["chalazion", "Chalazion"], ["conj_growth", "Conjunctival Growths"],

@@ -1,9 +1,19 @@
 import { and, eq, gte, inArray, lt, lte } from "drizzle-orm";
 
 import { computeReportChecksum, getEpiWeek } from "@/lib/reporting";
-import { emptyCellsFromTemplate, finalizeDailyTotals, moh505Template, moh710ATemplate, moh710BTemplate, moh416Template, moh735Template, moh717Template, moh705ATemplate, moh705BTemplate, setCell, type MohCell, type MohReportCode } from "@/lib/moh-reporting";
+import { MOH710B_ANTIGENS, emptyCellsFromTemplate, finalizeDailyTotals, moh505Template, moh710ATemplate, moh710BTemplate, moh416Template, moh735Template, moh717Template, moh705ATemplate, moh705BTemplate, setCell, type MohCell, type MohReportCode } from "@/lib/moh-reporting";
 import type { db } from "@/server/db/client";
 import { birthNotifications, deathNotifications, diagnoses, encounters, notifiableEvents, patients } from "@/server/db/schema";
+import {
+  dayKeyOf,
+  doseMatchesMoh710BCell,
+  eyeMatchesMoh416Cell,
+  eyeMatchesMoh735Cell,
+  fetchMohSources,
+  isoOrNull,
+  periodBounds,
+  stockMatchesMoh710BCell,
+} from "./moh-sources";
 
 export type ReportingDb = typeof db;
 
@@ -283,49 +293,228 @@ export async function generateMoh505(database: ReportingDb, input: GenerateMohIn
   return cells;
 }
 
-export async function generateMoh710A(_db: ReportingDb, input: GenerateMohInput): Promise<MohCell[]> {
-  void _db;
-  const cells = emptyCellsFromTemplate(moh710ATemplate(input.year, input.month));
-  finalizeDailyTotals(cells, "A");
-  return cells;
+function sourceNote(reportCode: string, input: GenerateMohInput) {
+  return `${reportCode} source rows: facility=${input.facilityId} branch=${input.branchId ?? "all"} period=${input.periodStart}..${input.periodEnd}`;
 }
-export async function generateMoh710B(_db: ReportingDb, _input: GenerateMohInput): Promise<MohCell[]> {
-  void _db;
-  void _input;
-  const template = moh710BTemplate();
+
+function appendCell(cells: MohCell[], cell: MohCell) {
+  cells.push({ ...cell, sortOrder: cells.length });
+}
+
+export async function generateMoh710A(database: ReportingDb, input: GenerateMohInput): Promise<MohCell[]> {
+  const template = moh710ATemplate(input.year, input.month);
   const cells = emptyCellsFromTemplate(template);
-  // C=A+B, D=C-E-G, H=G/E
-  const antigens = Array.from(new Set(cells.map((c) => c.rowCode?.split(":")[0]).filter(Boolean))) as string[];
-  for (const ag of antigens) {
-    const get = (s: string) => Number(cells.find((c) => c.rowCode === `${ag}:${s}`)?.valueNumeric ?? 0);
-    setCell(cells, "A", `${ag}:C`, "value", get("A") + get("B"));
-    setCell(cells, "A", `${ag}:D`, "value", get("A") + get("B") - get("E") - get("G"));
-    const e = get("E");
-    setCell(cells, "A", `${ag}:H`, "value", e === 0 ? 0 : Number(((get("G") / e) * 100).toFixed(2)));
+  const sources = await fetchMohSources(database, input);
+  const counts = new Map<string, Set<string>>();
+  for (const event of sources.doses) {
+    if (!event.doseCode) continue;
+    const day = dayKeyOf(event.administeredAt);
+    if (!day) continue;
+    const key = `${event.doseCode}|${day}`;
+    if (!counts.has(key)) counts.set(key, new Set());
+    counts.get(key)!.add(event.id);
+  }
+  for (const [key, ids] of counts) {
+    const [rowCode, colKey] = key.split("|");
+    setCell(cells, "A", rowCode, colKey, ids.size, sourceNote(`MOH710A immunizations ${rowCode}/${colKey}`, input));
+  }
+  finalizeDailyTotals(cells, "A");
+  for (const cell of cells) {
+    if (!cell.sourceQuery) cell.sourceQuery = sourceNote(`MOH710A immunizations ${cell.rowCode}/${cell.colKey}`, input);
   }
   return cells;
 }
+
+export async function generateMoh710B(database: ReportingDb, input: GenerateMohInput): Promise<MohCell[]> {
+  const cells = emptyCellsFromTemplate(moh710BTemplate());
+  const sources = await fetchMohSources(database, input);
+  const sumQty = (rows: Array<{ qtyDelta: number }>) => rows.reduce((total, row) => total + row.qtyDelta, 0);
+
+  for (const antigen of MOH710B_ANTIGENS) {
+    const stockFor = (suffix: string) =>
+      sources.stock.filter((event) => stockMatchesMoh710BCell(event, antigen, suffix, input));
+    const doseRows = sources.doses.filter((event) => doseMatchesMoh710BCell(event, antigen));
+    const opening = sumQty(stockFor("A"));
+    const received = sumQty(stockFor("B"));
+    const used = doseRows.length;
+    const vaccinated = new Set(doseRows.map((event) => event.patientId)).size;
+    const wasted = Math.abs(sumQty(stockFor("G")));
+    const values: Record<string, number> = {
+      A: opening,
+      B: received,
+      C: opening + received,
+      D: opening + received - used - wasted,
+      E: used,
+      F: vaccinated,
+      G: wasted,
+      H: used === 0 ? 0 : Number(((wasted / used) * 100).toFixed(2)),
+    };
+    for (const [suffix, value] of Object.entries(values)) {
+      setCell(cells, "A", `${antigen}:${suffix}`, "value", value, sourceNote(`MOH710B ${antigen}/${suffix} stock_ledger+immunizations`, input));
+    }
+  }
+  return cells;
+}
+
 export async function generateMoh416(database: ReportingDb, input: GenerateMohInput): Promise<MohCell[]> {
   const template = moh416Template();
   const cells = emptyCellsFromTemplate(template);
-  const encountersRows = await database.select({ id: encounters.id }).from(encounters).where(and(eq(encounters.facilityId, input.facilityId), gte(encounters.startedAt, new Date(`${input.periodStart}T00:00:00.000Z`)), lte(encounters.startedAt, new Date(`${input.periodEnd}T23:59:59.999Z`)), ...(input.branchId ? [eq(encounters.branchId, input.branchId)] : [])));
-  const totalSeen = encountersRows.length;
-  setCell(cells, "SUMMARY", "total_seen", "value", totalSeen);
-  setCell(cells, "SUMMARY", "total_not_seen", "value", 0);
-  setCell(cells, "SUMMARY", "direct_service", "value", 0);
-  setCell(cells, "SUMMARY", "net_seen", "value", totalSeen);
+  const sources = await fetchMohSources(database, input);
+  const eyes = sources.eyes;
+  const totalSeen = eyes.length;
+
+  const register = template.sections.find((section) => section.key === "REGISTER")!;
+  eyes.forEach((event, index) => {
+    const values: Record<string, string | number> = {
+      no: index + 1,
+      visit_id: event.encounterId,
+      branch: event.branchName,
+      patient_no: event.mrn,
+      patient_name: event.patientName,
+      age: event.age === 999 ? "" : event.age,
+      gender: event.sex,
+      county: event.county ?? "",
+      residence: event.residence ?? "",
+      phone: event.phone ?? "",
+      va_re: event.vaRight ?? "",
+      va_le: event.vaLeft ?? "",
+      disability: event.disabilityType ?? "",
+      impression: event.impression ?? "",
+      diagnosis: event.diagnosisCode,
+      management: event.management ?? "",
+      date: isoOrNull(event.visitedAt)?.slice(0, 10) ?? "",
+      time_reg: isoOrNull(event.timeRegistered)?.slice(11, 16) ?? "",
+      time_seen: isoOrNull(event.timeSeen)?.slice(11, 16) ?? "",
+      registered_by: event.registeredBy ?? "",
+      seen_by: event.seenBy,
+      pay_type: event.payerType,
+      last_stage: event.lastStage,
+      referral: event.referral ?? "",
+    };
+    for (const column of register.columns) {
+      const value = values[column.colKey] ?? "";
+      appendCell(cells, {
+        section: "REGISTER",
+        rowCode: event.id,
+        rowLabel: event.patientName,
+        colKey: column.colKey,
+        colLabel: column.colLabel,
+        valueNumeric: typeof value === "number" ? value : null,
+        valueText: typeof value === "string" ? value : null,
+        sortOrder: 0,
+        sourceQuery: sourceNote(`MOH416 register ${event.id}/${column.colKey}`, input),
+      });
+    }
+  });
+
+  setCell(cells, "SUMMARY", "total_seen", "value", totalSeen, sourceNote("MOH416 total_seen eye_assessments", input));
+  setCell(cells, "SUMMARY", "total_not_seen", "value", 0, sourceNote("MOH416 total_not_seen (no unseened register rows)", input));
+  setCell(cells, "SUMMARY", "direct_service", "value", 0, sourceNote("MOH416 direct_service (no dedicated source rows)", input));
+  setCell(cells, "SUMMARY", "net_seen", "value", totalSeen, sourceNote("MOH416 net_seen eye_assessments", input));
+
+  for (const row of template.sections.find((section) => section.key === "DEPTS")!.rows) {
+    const count = row.rowCode === "total" ? totalSeen : eyes.filter((event) => event.visitType === row.rowCode).length;
+    setCell(cells, "DEPTS", row.rowCode, "value", count, sourceNote(`MOH416 DEPTS ${row.rowCode}`, input));
+  }
+  for (const row of template.sections.find((section) => section.key === "QUEUE")!.rows) {
+    const count = sources.queues.filter((event) => event.status === row.rowCode).length;
+    setCell(cells, "QUEUE", row.rowCode, "value", count, sourceNote(`MOH416 QUEUE ${row.rowCode}`, input));
+  }
+  for (const row of template.sections.find((section) => section.key === "AGE")!.rows) {
+    const count = eyes.filter((event) => eyeMatchesMoh416Cell(event, "AGE", row.rowCode)).length;
+    setCell(cells, "AGE", row.rowCode, "value", count, sourceNote(`MOH416 AGE ${row.rowCode}`, input));
+  }
+  for (const row of template.sections.find((section) => section.key === "VISUAL_ACUITY")!.rows) {
+    const count = eyes.filter((event) => eyeMatchesMoh416Cell(event, "VISUAL_ACUITY", row.rowCode)).length;
+    setCell(cells, "VISUAL_ACUITY", row.rowCode, "value", count, sourceNote(`MOH416 visual acuity ${row.rowCode}`, input));
+  }
+
+  const addBreakdown = (section: string, entries: Array<{ rowCode: string; rowLabel: string; value: number }>) => {
+    entries.forEach((entry) => {
+      appendCell(cells, {
+        section,
+        rowCode: entry.rowCode,
+        rowLabel: entry.rowLabel,
+        colKey: "value",
+        colLabel: "Value",
+        valueNumeric: entry.value,
+        valueText: null,
+        sortOrder: 0,
+        sourceQuery: sourceNote(`MOH416 ${section} ${entry.rowCode}`, input),
+      });
+    });
+  };
+  const grouped = (key: (event: (typeof eyes)[number]) => string) => {
+    const map = new Map<string, number>();
+    for (const event of eyes) {
+      const label = key(event) || "Unspecified";
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  };
+  addBreakdown("DOCTORS", grouped((event) => event.seenBy).map(([label, value]) => ({ rowCode: label, rowLabel: label, value })));
+  const diagnosisLabels = new Map(moh735Template().sections.find((section) => section.key === "D")!.rows.map((row) => [row.rowCode, row.rowLabel]));
+  addBreakdown("DIAGNOSIS", grouped((event) => event.normalizedDiagnosis).map(([label, value]) => ({ rowCode: label, rowLabel: diagnosisLabels.get(label) ?? label, value })));
+  const branches = grouped((event) => event.branchName);
+  addBreakdown("BRANCHES", branches.map(([label, value]) => ({ rowCode: label, rowLabel: label, value })));
+  let allocated = 0;
+  const residency = branches.map(([label, value], index) => {
+    const percent = totalSeen === 0
+      ? 0
+      : index === branches.length - 1
+        ? Number((100 - allocated).toFixed(2))
+        : Number(((value / totalSeen) * 100).toFixed(2));
+    allocated += percent;
+    return { rowCode: label, rowLabel: label, percent };
+  });
+  addBreakdown("RESIDENCY", residency.map((row) => ({ ...row, value: row.percent })));
+  for (const row of residency) {
+    appendCell(cells, {
+      section: "RESIDENCY",
+      rowCode: row.rowCode,
+      rowLabel: row.rowLabel,
+      colKey: "percent",
+      colLabel: "Percentage",
+      valueNumeric: row.percent,
+      valueText: null,
+      sortOrder: 0,
+      sourceQuery: sourceNote(`MOH416 RESIDENCY ${row.rowCode} percentage`, input),
+    });
+  }
   return cells;
 }
-export async function generateMoh735(_db: ReportingDb, _input: GenerateMohInput): Promise<MohCell[]> {
-  void _db;
-  void _input;
+
+export async function generateMoh735(database: ReportingDb, input: GenerateMohInput): Promise<MohCell[]> {
   const template = moh735Template();
   const cells = emptyCellsFromTemplate(template);
-  // diagnosis total = Normal + Low Vision + Blind across age bands/sex (all diag cols except total)
-  for (const row of template.sections.find((s) => s.key === "D")!.rows) {
-    const diagCols = template.sections.find((s) => s.key === "D")!.columns.filter((c) => c.colKey !== "total");
-    const total = diagCols.reduce((n, c) => n + Number(cells.find((x) => x.section === "D" && x.rowCode === row.rowCode && x.colKey === c.colKey)?.valueNumeric ?? 0), 0);
-    setCell(cells, "D", row.rowCode, "total", total);
+  const sources = await fetchMohSources(database, input);
+  const { start, end } = periodBounds(input);
+
+  for (const section of template.sections) {
+    if (section.key === "C") {
+      const values: Record<string, number> = {
+        beds: sources.eyeWardBeds,
+        admissions: sources.eyes.filter((event) => event.admittedAt != null && event.admittedAt >= start && event.admittedAt <= end).length,
+        discharges: sources.eyes.filter((event) => event.dischargedAt != null && event.dischargedAt >= start && event.dischargedAt <= end).length,
+      };
+      for (const [colKey, value] of Object.entries(values)) {
+        setCell(cells, "C", "ward", colKey, value, sourceNote(`MOH735 C/${colKey} eye_assessments+facility_settings`, input));
+      }
+      continue;
+    }
+    for (const row of section.rows) {
+      for (const column of section.columns) {
+        const count = sources.eyes.filter((event) => eyeMatchesMoh735Cell(event, section.key, row.rowCode, column.colKey)).length;
+        setCell(cells, section.key, row.rowCode, column.colKey, count, sourceNote(`MOH735 ${section.key}/${row.rowCode}/${column.colKey}`, input));
+      }
+    }
+  }
+  const diagSection = template.sections.find((section) => section.key === "D")!;
+  for (const row of diagSection.rows) {
+    const total = diagSection.columns
+      .filter((column) => column.colKey !== "total")
+      .reduce((sum, column) => sum + Number(cells.find((cell) => cell.section === "D" && cell.rowCode === row.rowCode && cell.colKey === column.colKey)?.valueNumeric ?? 0), 0);
+    setCell(cells, "D", row.rowCode, "total", total, sourceNote(`MOH735 D/${row.rowCode} total`, input));
   }
   return cells;
 }

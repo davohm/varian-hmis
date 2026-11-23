@@ -2,10 +2,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
-import { createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateReportRun, regenerateReportRun, submitNotifiableEvent, submitReportRun, voidReportRun } from "../src/server/commands/reporting";
-import { auditLog, diagnoses, encounters, fiscalPeriods, patients, reportCells, reportRuns, staffRoleScopes, syncOutbox } from "../src/server/db/schema";
+import { createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateReportRun, recordEyeAssessment, recordImmunization, regenerateReportRun, submitNotifiableEvent, submitReportRun, voidReportRun } from "../src/server/commands/reporting";
+import { auditLog, diagnoses, encounters, facilityRegulatoryProfiles, facilitySettings, fiscalPeriods, items, patients, queueEntries, reportCells, reportRuns, staffRoleScopes, stockLedger, stores, syncOutbox } from "../src/server/db/schema";
 import { cellsToPdfBytes, cellsToXlsxBytes, exportChecksum } from "../src/lib/moh-export";
-import { drillDownReportCell, getReportCells, getReportRunAuditTrail } from "../src/server/queries/reporting";
+import { drillDownReportCell, getReportCells, getReportRunAuditTrail, getReportRunMeta } from "../src/server/queries/reporting";
 import { cleanupTestFacility, createTestDatabase, insertTestActor, insertTestBranch, insertTestFacility } from "./helpers";
 
 const { db, pool } = createTestDatabase();
@@ -403,12 +403,14 @@ describe("Phase 20 MOH statutory reporting", () => {
     const branchId = await insertTestBranch(db, facilityId);
     try {
       const p = newId();
+      const e = newId();
       await db.insert(patients).values({ id: p, facilityId, mrn: `MRN-416-${newId().slice(0, 8)}`, firstName: "Eye", lastName: "Patient", dob: "1990-01-01", sex: "female", payerType: "cash", createdBy: "vitest" });
-      await db.insert(encounters).values({ id: newId(), facilityId, branchId, patientId: p, encounterNo: `ENC-416-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-09T09:00:00.000Z"), createdBy: "vitest" });
+      await db.insert(encounters).values({ id: e, facilityId, branchId, patientId: p, encounterNo: `ENC-416-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-09T09:00:00.000Z"), createdBy: "vitest" });
+      const eye = await recordEyeAssessment(cmd(facilityId, actorId, { branchId, patientId: p, encounterId: e, diagnosisCode: "cataract", visitedAt: "2026-10-09T09:00:00.000Z" }), { database: db });
       const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH416" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
       const dd = await drillDownReportCell(db, facilityId, gen.runId, "total_seen", "value");
       expect(Array.isArray(dd?.sourceRows)).toBe(true);
-      expect((dd?.sourceRows as Array<Record<string, unknown>>).length).toBeGreaterThanOrEqual(1);
+      expect((dd?.sourceRows as Array<Record<string, unknown>>).map((row) => row.eyeAssessmentId)).toContain(eye.eyeAssessmentId);
     } finally { await cleanupTestFacility(db, facilityId); }
   });
 
@@ -499,19 +501,68 @@ describe("Phase 20 MOH statutory reporting", () => {
     } finally { await cleanupTestFacility(db, facilityId); }
   });
 
-  it("11. drill-down returns explicit provenance for 710A/710B/735 template-sourced cells", async () => {
+  it("710A/710B/735 drill down to the exact operational source rows", async () => {
     const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
     try {
-      for (const reportCode of ["MOH710A", "MOH710B", "MOH735"] as const) {
-        const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
-        const cells = await getReportCells(db, facilityId, gen.runId);
-        const first = cells[0];
-        expect(first).toBeTruthy();
-        const dd = await drillDownReportCell(db, facilityId, gen.runId, first!.rowCode ?? "", first!.colKey ?? "");
-        expect(dd?.sourceQuery).toBeTruthy();
-        expect(Array.isArray(dd?.sourceRows)).toBe(true);
-        expect((dd?.sourceRows as Array<Record<string, unknown>>)[0]?.provenance).toBe("template");
-      }
+      const patientId = newId();
+      const encounterId = newId();
+      await db.insert(patients).values({ id: patientId, facilityId, mrn: `MRN-EPI-${newId().slice(0, 8)}`, firstName: "Epi", lastName: "Child", dob: "2010-01-01", sex: "female", payerType: "cash", createdBy: "vitest" });
+      await db.insert(encounters).values({ id: encounterId, facilityId, branchId, patientId, encounterNo: `ENC-EPI-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-05T09:00:00.000Z"), createdBy: "vitest" });
+
+      const immunization = await recordImmunization(cmd(facilityId, actorId, {
+        branchId, patientId, encounterId, antigenCode: "BCG", doseCode: "BCG",
+        administeredAt: "2026-10-05T09:30:00.000Z",
+      }), { database: db });
+
+      const storeId = newId();
+      await db.insert(stores).values({ id: storeId, facilityId, branchId, name: "EPI Pharmacy", kind: "pharmacy", createdBy: "vitest" });
+      const itemId = newId();
+      await db.insert(items).values({ id: itemId, facilityId, code: "BCG", name: "BCG vaccine", kind: "drug", createdBy: "vitest" });
+      await db.insert(stockLedger).values([
+        { id: newId(), facilityId, storeId, itemId, qtyDelta: 20, reason: "receive" as const, refType: "test", refId: "opening", createdAt: new Date("2026-09-25T08:00:00.000Z"), createdBy: "vitest" },
+        { id: newId(), facilityId, storeId, itemId, qtyDelta: 5, reason: "receive" as const, refType: "test", refId: "receipt", createdAt: new Date("2026-10-04T08:00:00.000Z"), createdBy: "vitest" },
+        { id: newId(), facilityId, storeId, itemId, qtyDelta: -2, reason: "adjust" as const, refType: "test", refId: "wastage", createdAt: new Date("2026-10-07T08:00:00.000Z"), createdBy: "vitest" },
+      ]);
+
+      const eye = await recordEyeAssessment(cmd(facilityId, actorId, {
+        branchId, patientId, encounterId, diagnosisCode: "cataract", visitType: "new",
+        visualAcuity: "low_vision", vaRight: "6/48", visitedAt: "2026-10-09T09:00:00.000Z",
+        admittedAt: "2026-10-09T10:00:00.000Z", dischargedAt: "2026-10-10T10:00:00.000Z",
+      }), { database: db });
+      await db.insert(facilitySettings).values({ id: newId(), facilityId, domain: "reporting", key: "eye_ward_beds", valueNumeric: "12", dataType: "integer", effectiveFrom: "2020-01-01", createdBy: "vitest" });
+
+      const gen710a = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH710A" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells710a = await getReportCells(db, facilityId, gen710a.runId);
+      expect(Number(cells710a.find((c) => c.rowCode === "BCG" && c.colKey === "d05")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(cells710a.find((c) => c.rowCode === "BCG" && c.colKey === "total")?.valueNumeric ?? 0)).toBe(1);
+      const dd710a = await drillDownReportCell(db, facilityId, gen710a.runId, "BCG", "d05");
+      expect((dd710a?.sourceRows as Array<Record<string, unknown>>).map((r) => r.immunizationId)).toEqual([immunization.immunizationId]);
+
+      const gen710b = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH710B" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells710b = await getReportCells(db, facilityId, gen710b.runId);
+      const val710b = (suffix: string) => Number(cells710b.find((c) => c.rowCode === `BCG:${suffix}` && c.colKey === "value")?.valueNumeric ?? 0);
+      expect([val710b("A"), val710b("B"), val710b("C"), val710b("D"), val710b("E"), val710b("G"), val710b("H")]).toEqual([20, 5, 25, 22, 1, 2, 200]);
+      const ddOpening = await drillDownReportCell(db, facilityId, gen710b.runId, "BCG:A", "value");
+      expect((ddOpening?.sourceRows as Array<Record<string, unknown>>)[0]?.provenance).toBe("stock_ledger");
+      expect((ddOpening?.sourceRows as Array<Record<string, unknown>>)[0]?.qtyDelta).toBe(20);
+      const ddUsed = await drillDownReportCell(db, facilityId, gen710b.runId, "BCG:E", "value");
+      expect((ddUsed?.sourceRows as Array<Record<string, unknown>>).map((r) => r.immunizationId)).toEqual([immunization.immunizationId]);
+
+      const gen735 = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH735" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells735 = await getReportCells(db, facilityId, gen735.runId);
+      const val735 = (section: string, rowCode: string, colKey: string) => Number(cells735.find((c) => c.section === section && c.rowCode === rowCode && c.colKey === colKey)?.valueNumeric ?? 0);
+      expect(val735("A", "workload", "ge16_new_f")).toBe(1);
+      expect(val735("B", "va", "lv_f")).toBe(1);
+      expect(val735("C", "ward", "beds")).toBe(12);
+      expect(val735("C", "ward", "admissions")).toBe(1);
+      expect(val735("C", "ward", "discharges")).toBe(1);
+      expect(val735("D", "cataract", "lv_ge16_f")).toBe(1);
+      expect(val735("D", "cataract", "total")).toBe(1);
+      const dd735 = await drillDownReportCell(db, facilityId, gen735.runId, "cataract", "lv_ge16_f");
+      expect((dd735?.sourceRows as Array<Record<string, unknown>>).map((r) => r.eyeAssessmentId)).toEqual([eye.eyeAssessmentId]);
+      const dd735Total = await drillDownReportCell(db, facilityId, gen735.runId, "cataract", "total");
+      expect((dd735Total?.sourceRows as Array<Record<string, unknown>>).map((r) => r.eyeAssessmentId)).toEqual([eye.eyeAssessmentId]);
     } finally { await cleanupTestFacility(db, facilityId); }
   });
 
@@ -537,6 +588,76 @@ describe("Phase 20 MOH statutory reporting", () => {
     } finally { await cleanupTestFacility(db, facilityId); }
   });
 
+  it("416 renders every breakdown block from eye assessment source rows", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
+    try {
+      const patientId = newId();
+      const encounterId = newId();
+      await db.insert(patients).values({ id: patientId, facilityId, mrn: `MRN-416B-${newId().slice(0, 8)}`, firstName: "Break", lastName: "Down", dob: "2010-01-01", sex: "female", payerType: "cash", createdBy: "vitest" });
+      await db.insert(encounters).values({ id: encounterId, facilityId, branchId, patientId, encounterNo: `ENC-416B-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-09T09:00:00.000Z"), createdBy: "vitest" });
+      const eye = await recordEyeAssessment(cmd(facilityId, actorId, {
+        branchId, patientId, encounterId, diagnosisCode: "cataract", visitType: "revisit",
+        visualAcuity: "blind", vaRight: "NPL", vaLeft: "NPL", seenBy: "Dr A",
+        county: "Nairobi", residence: "Kilimani", timeRegistered: "2026-10-09T09:01:00.000Z",
+        timeSeen: "2026-10-09T09:20:00.000Z", lastStage: "done",
+        visitedAt: "2026-10-09T09:00:00.000Z",
+      }), { database: db });
+      await db.insert(queueEntries).values({ id: newId(), facilityId, department: "Eye Clinic", encounterId, patientId, status: "done", priority: "normal", createdBy: "vitest" });
+      const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH416" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells = await getReportCells(db, facilityId, gen.runId);
+      const value = (section: string, rowCode: string, colKey = "value") => cells.find((c) => c.section === section && c.rowCode === rowCode && c.colKey === colKey);
+      expect(value("REGISTER", eye.eyeAssessmentId, "patient_name")?.valueText).toBe("Break Down");
+      expect(Number(value("DEPTS", "revisit")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("DOCTORS", "Dr A")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("DIAGNOSIS", "cataract")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("BRANCHES", "Main Branch")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("QUEUE", "done")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("AGE", "ge16_revisit_f")?.valueNumeric ?? 0)).toBe(1);
+      expect(Number(value("VISUAL_ACUITY", "blind_f")?.valueNumeric ?? 0)).toBe(1);
+      const percentages = cells.filter((c) => c.section === "RESIDENCY" && c.colKey === "percent");
+      expect(percentages.reduce((total, c) => total + Number(c.valueNumeric ?? 0), 0)).toBe(100);
+
+      for (const [rowCode, colKey, provenance] of [
+        [eye.eyeAssessmentId, "patient_name", "eye_assessments"],
+        ["Dr A", "value", "eye_assessments"],
+        ["cataract", "value", "eye_assessments"],
+        ["done", "value", "queue_entries"],
+        ["ge16_revisit_f", "value", "eye_assessments"],
+        ["blind_f", "value", "eye_assessments"],
+      ] as const) {
+        const dd = await drillDownReportCell(db, facilityId, gen.runId, rowCode, colKey);
+        expect((dd?.sourceRows as Array<Record<string, unknown>>)[0]?.provenance).toBe(provenance);
+      }
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("source-record commands are audited, outboxed and idempotent", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
+    try {
+      const patientId = newId();
+      const encounterId = newId();
+      await db.insert(patients).values({ id: patientId, facilityId, mrn: `MRN-SRC-${newId().slice(0, 8)}`, firstName: "Source", lastName: "Records", dob: "2015-01-01", sex: "male", payerType: "cash", createdBy: "vitest" });
+      await db.insert(encounters).values({ id: encounterId, facilityId, branchId, patientId, encounterNo: `ENC-SRC-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-09T09:00:00.000Z"), createdBy: "vitest" });
+
+      const immunizationInput = cmd(facilityId, actorId, { branchId, patientId, doseCode: "OPV1", antigenCode: "OPV", administeredAt: "2026-10-09T10:00:00.000Z" });
+      const firstDose = await recordImmunization(immunizationInput, { database: db });
+      const replayDose = await recordImmunization(immunizationInput, { database: db });
+      expect(replayDose.immunizationId).toBe(firstDose.immunizationId);
+
+      const eyeInput = cmd(facilityId, actorId, { branchId, patientId, encounterId, diagnosisCode: "glaucoma", visitedAt: "2026-10-09T09:00:00.000Z" });
+      const firstEye = await recordEyeAssessment(eyeInput, { database: db });
+      const replayEye = await recordEyeAssessment(eyeInput, { database: db });
+      expect(replayEye.eyeAssessmentId).toBe(firstEye.eyeAssessmentId);
+
+      const audits = await db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.facilityId, facilityId));
+      expect(audits.length).toBeGreaterThanOrEqual(2);
+      const outbox = await db.select({ id: syncOutbox.outboxId }).from(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
+      expect(outbox.length).toBeGreaterThanOrEqual(2);
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
   it("7. binary XLSX and PDF exports are real files with checksum metadata", () => {
     const cells = [{ section: "A", rowCode: "1", rowLabel: "Cholera", colKey: "d01", colLabel: "01", valueNumeric: "2", valueText: null, sortOrder: 1, isTotal: false }];
     const xlsx = cellsToXlsxBytes("MOH705A", "2026-10-01 to 2026-10-31", cells);
@@ -545,5 +666,32 @@ describe("Phase 20 MOH statutory reporting", () => {
     const pdf = cellsToPdfBytes("MOH705A", "MOH 705A", "2026-10-01 to 2026-10-31", exportChecksum(cells), cells);
     expect(new TextDecoder().decode(pdf.slice(0, 8))).toBe("%PDF-1.4");
     expect(new TextDecoder().decode(pdf)).toContain("Checksum:");
+  });
+
+  it("report run meta exposes statutory sheet letterhead and period details", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
+    try {
+      await db.insert(facilityRegulatoryProfiles).values({
+        facilityId, county: "Nairobi", subCounty: "Dagoretti", ward: "Kawangware",
+        kmhflId: "MFL-12345", licenceStatus: "active", version: 1, createdBy: "vitest",
+      });
+      const gen = await generateReportRun(cmd(facilityId, actorId, {
+        reportCode: "MOH705A" as const, branchId, year: 2026, month: 10, today: "2026-11-22",
+      }), { database: db });
+      const meta = await getReportRunMeta(db, facilityId, gen.runId);
+      expect(meta).not.toBeNull();
+      expect(meta!.county).toBe("Nairobi");
+      expect(meta!.subCounty).toBe("Dagoretti");
+      expect(meta!.ward).toBe("Kawangware");
+      expect(meta!.kmhflId).toBe("MFL-12345");
+      expect(meta!.branchName).toContain("Branch");
+      expect(meta!.reportCode).toBe("MOH705A");
+      expect(meta!.periodStart).toBe("2026-10-01");
+      expect(meta!.periodEnd).toBe("2026-10-31");
+      expect(meta!.status).toBe("generated");
+      expect(meta!.checksum).toBeTruthy();
+      expect(await getReportRunMeta(db, facilityId, newId())).toBeNull();
+    } finally { await cleanupTestFacility(db, facilityId); }
   });
 });

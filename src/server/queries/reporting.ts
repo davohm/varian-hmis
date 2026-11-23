@@ -13,7 +13,6 @@ import {
   defaultReportFilters,
 } from "@/lib/erp-reporting";
 import {
-  ERP_REPORT_CODES,
   PROMPT17_ERP_REPORTS,
   PROMPT20_REPORTS,
   computeReportChecksum,
@@ -24,9 +23,12 @@ import {
   assetDisposals,
   assetValuations,
   auditLog,
+  branches,
   budgetLines,
   budgets,
   depreciationRuns,
+  facilities,
+  facilityRegulatoryProfiles,
   journalEntries,
   journalLines,
   ledgerAccounts,
@@ -51,6 +53,7 @@ import { getFinancialStatements, getTrialBalance } from "@/server/queries/financ
 import { listPayrollRuns } from "@/server/queries/payroll";
 import { getStockValuation } from "@/server/queries/procurement";
 import { getRevenueOverview } from "@/server/queries/revenue";
+import { fetchMohSources, mohSourceRowsForCell } from "@/server/reporting/moh-sources";
 
 export type ReportingDatabase = typeof db;
 
@@ -1147,7 +1150,7 @@ function matches705B(row: string, diagnosis: string | null) {
 export async function drillDownReportCell(database: ReportingDatabase, facilityId: string, runId: string, rowCode: string, colKey: string) {
   const [cell] = await database.select().from(reportCells).where(and(eq(reportCells.facilityId, facilityId), eq(reportCells.reportRunId, runId), eq(reportCells.rowCode, rowCode), eq(reportCells.colKey, colKey))).limit(1);
   if (!cell) return null;
-  const [run] = await database.select({ reportId: reportRuns.reportId, periodStart: reportRuns.periodStart, periodEnd: reportRuns.periodEnd }).from(reportRuns).where(and(eq(reportRuns.facilityId, facilityId), eq(reportRuns.id, runId))).limit(1);
+  const [run] = await database.select({ reportId: reportRuns.reportId, branchId: reportRuns.branchId, periodStart: reportRuns.periodStart, periodEnd: reportRuns.periodEnd }).from(reportRuns).where(and(eq(reportRuns.facilityId, facilityId), eq(reportRuns.id, runId))).limit(1);
   const [cat] = run ? await database.select({ reportCode: reportCatalogue.reportCode }).from(reportCatalogue).where(eq(reportCatalogue.id, run.reportId)).limit(1) : [undefined];
   const reportCode = cat?.reportCode;
   if (run && (reportCode === "MOH705A" || reportCode === "MOH705B") && colKey.startsWith("d")) {
@@ -1216,26 +1219,26 @@ export async function drillDownReportCell(database: ReportingDatabase, facilityI
     }).map((r) => ({ encounterId: r.id, patientId: r.patientId, startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : String(r.startedAt), sex: r.sex, revisit: priorByPatient.has(r.patientId) }));
     return { cell, sourceQuery: cell.sourceQuery, sourceRows: matched };
   }
-  if (run && reportCode === "MOH416") {
-    const periodStart = new Date(`${String(run.periodStart)}T00:00:00.000Z`);
-    const periodEnd = new Date(`${String(run.periodEnd)}T23:59:59.999Z`);
-    const rows = await database.select({ encounterId: encounters.id, patientId: encounters.patientId, startedAt: encounters.startedAt, status: encounters.status }).from(encounters).where(and(eq(encounters.facilityId, facilityId), gte(encounters.startedAt, periodStart), lte(encounters.startedAt, periodEnd)));
-    const mapped = rows.map((r) => ({ encounterId: r.encounterId, patientId: r.patientId, startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : String(r.startedAt), status: r.status }));
-    if (["total_seen", "net_seen", "value"].includes(colKey) || rowCode === "total_seen" || rowCode === "net_seen") return { cell, sourceQuery: cell.sourceQuery, sourceRows: mapped };
-    return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
-  }
-  if (run && (reportCode === "MOH710A" || reportCode === "MOH710B" || reportCode === "MOH735")) {
-    const sourceQuery = cell.sourceQuery ?? `${reportCode} cell derived from template/generator output; no row-level operational source mapped in current generator`;
+  if (
+    run &&
+    (reportCode === "MOH710A" || reportCode === "MOH710B" || reportCode === "MOH735" || reportCode === "MOH416")
+  ) {
+    const periodInput = {
+      facilityId,
+      branchId: run.branchId,
+      periodStart: String(run.periodStart),
+      periodEnd: String(run.periodEnd),
+    };
+    const sources = await fetchMohSources(database, periodInput);
+    const sourceRows = mohSourceRowsForCell(reportCode, periodInput, {
+      section: cell.section,
+      rowCode: cell.rowCode,
+      colKey: cell.colKey,
+    }, sources);
     return {
       cell,
-      sourceQuery,
-      sourceRows: [{
-        provenance: "template",
-        reportCode,
-        rowCode,
-        colKey,
-        note: "No row-level operational source table is mapped for this report cell in the current generator.",
-      }],
+      sourceQuery: cell.sourceQuery ?? `${reportCode} operational source rows`,
+      sourceRows,
     };
   }
   return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
@@ -1257,4 +1260,109 @@ export async function listOverdueNotifiableEvents(database: ReportingDatabase, f
 export async function getReportRunAuditTrail(database: ReportingDatabase, facilityId: string, runId: string) {
   const rows = await database.select({ id: auditLog.id, action: auditLog.action, entity: auditLog.entity, entityId: auditLog.entityId, createdAt: auditLog.createdAt, actorId: auditLog.userId, details: auditLog.details }).from(auditLog).where(and(eq(auditLog.facilityId, facilityId), eq(auditLog.entity, "report_run"), eq(auditLog.entityId, runId))).orderBy(desc(auditLog.createdAt));
   return rows.map((r) => ({ ...r, createdAt: asIso(r.createdAt) ?? "" }));
+}
+
+export interface ReportRunMeta {
+  runId: string;
+  reportCode: string;
+  reportName: string;
+  authority: string | null;
+  periodType: string;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+  epiWeek: number | null;
+  epiYear: number | null;
+  month: number | null;
+  year: number | null;
+  checksum: string | null;
+  generatedAt: string | null;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  acknowledgementRef: string | null;
+  facilityName: string | null;
+  branchName: string | null;
+  county: string | null;
+  subCounty: string | null;
+  ward: string | null;
+  kmhflId: string | null;
+}
+
+export async function getReportRunMeta(
+  database: ReportingDatabase,
+  facilityId: string,
+  runId: string,
+): Promise<ReportRunMeta | null> {
+  const [row] = await database
+    .select({
+      runId: reportRuns.id,
+      reportCode: reportCatalogue.reportCode,
+      reportName: reportCatalogue.name,
+      authority: reportCatalogue.authority,
+      periodType: reportCatalogue.periodType,
+      status: reportRuns.status,
+      periodStart: reportRuns.periodStart,
+      periodEnd: reportRuns.periodEnd,
+      epiWeek: reportRuns.epiWeek,
+      epiYear: reportRuns.epiYear,
+      month: reportRuns.month,
+      year: reportRuns.year,
+      checksum: reportRuns.checksum,
+      generatedAt: reportRuns.generatedAt,
+      submittedAt: reportRuns.submittedAt,
+      submittedBy: reportRuns.submittedBy,
+      acknowledgementRef: reportRuns.acknowledgementRef,
+      branchId: reportRuns.branchId,
+      facilityName: facilities.name,
+      county: facilityRegulatoryProfiles.county,
+      subCounty: facilityRegulatoryProfiles.subCounty,
+      ward: facilityRegulatoryProfiles.ward,
+      kmhflId: facilityRegulatoryProfiles.kmhflId,
+    })
+    .from(reportRuns)
+    .innerJoin(reportCatalogue, eq(reportCatalogue.id, reportRuns.reportId))
+    .innerJoin(facilities, eq(facilities.id, reportRuns.facilityId))
+    .leftJoin(
+      facilityRegulatoryProfiles,
+      eq(facilityRegulatoryProfiles.facilityId, reportRuns.facilityId),
+    )
+    .where(and(eq(reportRuns.facilityId, facilityId), eq(reportRuns.id, runId)))
+    .limit(1);
+  if (!row) return null;
+
+  let branchName: string | null = null;
+  if (row.branchId) {
+    const [branch] = await database
+      .select({ name: branches.name })
+      .from(branches)
+      .where(and(eq(branches.facilityId, facilityId), eq(branches.id, row.branchId)))
+      .limit(1);
+    branchName = branch?.name ?? null;
+  }
+
+  return {
+    runId: row.runId,
+    reportCode: row.reportCode,
+    reportName: row.reportName,
+    authority: row.authority ?? null,
+    periodType: row.periodType,
+    status: row.status,
+    periodStart: String(row.periodStart),
+    periodEnd: String(row.periodEnd),
+    epiWeek: row.epiWeek ?? null,
+    epiYear: row.epiYear ?? null,
+    month: row.month ?? null,
+    year: row.year ?? null,
+    checksum: row.checksum ?? null,
+    generatedAt: asIso(row.generatedAt),
+    submittedAt: asIso(row.submittedAt),
+    submittedBy: row.submittedBy ?? null,
+    acknowledgementRef: row.acknowledgementRef ?? null,
+    facilityName: row.facilityName ?? null,
+    branchName,
+    county: row.county ?? null,
+    subCounty: row.subCounty ?? null,
+    ward: row.ward ?? null,
+    kmhflId: row.kmhflId ?? null,
+  };
 }

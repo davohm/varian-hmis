@@ -51,6 +51,32 @@ export interface MohReportCellRow {
   sourceQuery: string | null;
 }
 
+export interface MohReportMeta {
+  runId: string;
+  reportCode: string;
+  reportName: string;
+  authority: string | null;
+  periodType: string;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+  epiWeek: number | null;
+  epiYear: number | null;
+  month: number | null;
+  year: number | null;
+  checksum: string | null;
+  generatedAt: string | null;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  acknowledgementRef: string | null;
+  facilityName: string | null;
+  branchName: string | null;
+  county: string | null;
+  subCounty: string | null;
+  ward: string | null;
+  kmhflId: string | null;
+}
+
 export interface ReportsApiData {
   catalogue: ReportCatalogueRow[];
   savedViews: SavedReportViewRow[];
@@ -60,6 +86,7 @@ export interface ReportsApiData {
   mohRuns?: MohReportRunRow[];
   mohCells?: MohReportCellRow[];
   mohAuditTrail?: Array<{ id: string; action: string; entity: string; entityId: string | null; createdAt: string; actorId: string | null; details: unknown }>;
+  mohMeta?: MohReportMeta | null;
 }
 
 export function formatMoney(value: string | number | null | undefined): string {

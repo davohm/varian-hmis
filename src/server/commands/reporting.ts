@@ -7,7 +7,7 @@ import { MOH_REPORT_CODES, isMohReportCode, type MohReportCode } from "@/lib/moh
 import { generateMohReport, mohChecksum } from "@/server/reporting/moh";
 import { recordAudit } from "@/server/audit";
 import { db } from "@/server/db/client";
-import { birthNotifications, deathNotifications, fiscalPeriods, notifiableEvents, reportCatalogue, reportCells, reportRuns, reportSavedViews } from "@/server/db/schema";
+import { birthNotifications, branches, deathNotifications, encounters, eyeAssessments, fiscalPeriods, immunizations, notifiableEvents, patients, reportCatalogue, reportCells, reportRuns, reportSavedViews } from "@/server/db/schema";
 import { publishEvent } from "@/server/events";
 import { asExecutor, runCommand, type CommandOptions, type CommandTransaction } from "@/server/commands/run";
 import { assertFacilityReady } from "@/server/commands/regulatory";
@@ -543,5 +543,144 @@ export async function createDeathNotification(input: z.input<typeof createDeathN
     const [row] = await tx.insert(deathNotifications).values({ facilityId: values.facilityId, patientId: values.patientId ?? null, encounterId: values.encounterId ?? null, dateOfDeath: values.dateOfDeath, causeCode: values.causeCode ?? null, causeText: values.causeText ?? null, placeOfDeath: values.placeOfDeath ?? null, notificationNo, notifiedAt: new Date(), status: "submitted", notes: values.notes ?? null, createdBy: values.actor.userId, version: 1 }).returning({ id: deathNotifications.id, notificationNo: deathNotifications.notificationNo });
     await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "death_notification_created", entity: "death_notification", entityId: row.id, details: { notificationNo: row.notificationNo, dateOfDeath: values.dateOfDeath } });
     return { notificationId: row.id, notificationNo: row.notificationNo };
+  }, options);
+}
+
+/** Source-record commands for the MOH 710A/EPI summary. */
+export const recordImmunizationSchema = z.object({
+  facilityId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
+  actor: baseActor,
+  branchId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  encounterId: z.string().uuid().nullable().optional(),
+  itemId: z.string().uuid().nullable().optional(),
+  batchId: z.string().uuid().nullable().optional(),
+  antigenCode: z.string().trim().min(1).max(32),
+  doseCode: z.string().trim().min(1).max(32),
+  administeredAt: z.string().datetime().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export async function recordImmunization(input: z.input<typeof recordImmunizationSchema>, options: CommandOptions = {}) {
+  const values = recordImmunizationSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "recordImmunization", async (tx) => {
+    const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, values.branchId), eq(branches.facilityId, values.facilityId))).limit(1);
+    if (!branch) throw new Error("Branch not found for this facility");
+    const [patient] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.id, values.patientId), eq(patients.facilityId, values.facilityId))).limit(1);
+    if (!patient) throw new Error("Patient not found for this facility");
+    if (values.encounterId) {
+      const [encounter] = await tx.select({ id: encounters.id }).from(encounters).where(and(eq(encounters.id, values.encounterId), eq(encounters.facilityId, values.facilityId), eq(encounters.patientId, values.patientId))).limit(1);
+      if (!encounter) throw new Error("Encounter not found for this patient");
+    }
+    const [row] = await tx.insert(immunizations).values({
+      facilityId: values.facilityId,
+      branchId: values.branchId,
+      encounterId: values.encounterId ?? null,
+      patientId: values.patientId,
+      itemId: values.itemId ?? null,
+      batchId: values.batchId ?? null,
+      antigenCode: values.antigenCode,
+      doseCode: values.doseCode,
+      administeredAt: values.administeredAt ? new Date(values.administeredAt) : new Date(),
+      status: "administered",
+      notes: values.notes ?? null,
+      createdBy: values.actor.userId,
+      version: 1,
+    }).returning({ id: immunizations.id });
+    await auditReport(tx, {
+      facilityId: values.facilityId,
+      userId: values.actor.userId,
+      ip: values.actor.ip,
+      deviceId: values.actor.deviceId,
+      action: "immunization_recorded",
+      entity: "immunization",
+      entityId: row.id,
+      details: { patientId: values.patientId, antigenCode: values.antigenCode, doseCode: values.doseCode },
+    });
+    return { immunizationId: row.id };
+  }, options);
+}
+
+/** Source-record commands for the MOH 416 register and 735 eye summary. */
+export const recordEyeAssessmentSchema = z.object({
+  facilityId: z.string().uuid(),
+  idempotencyKey: z.string().uuid(),
+  actor: baseActor,
+  branchId: z.string().uuid(),
+  encounterId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  visitedAt: z.string().datetime().optional(),
+  visitType: z.enum(["new", "revisit", "review", "walk_in"]).default("new"),
+  visualAcuity: z.enum(["normal", "low_vision", "blind"]).default("normal"),
+  vaRight: z.string().trim().max(32).nullable().optional(),
+  vaLeft: z.string().trim().max(32).nullable().optional(),
+  disabilityType: z.string().trim().max(200).nullable().optional(),
+  diagnosisCode: z.string().trim().min(1).max(64),
+  impression: z.string().trim().max(500).nullable().optional(),
+  management: z.string().trim().max(2000).nullable().optional(),
+  referral: z.string().trim().max(500).nullable().optional(),
+  county: z.string().trim().max(120).nullable().optional(),
+  residence: z.string().trim().max(200).nullable().optional(),
+  phone: z.string().trim().max(30).nullable().optional(),
+  registeredBy: z.string().trim().max(200).nullable().optional(),
+  seenBy: z.string().trim().max(200).nullable().optional(),
+  timeRegistered: z.string().datetime().nullable().optional(),
+  timeSeen: z.string().datetime().nullable().optional(),
+  lastStage: z.string().trim().max(64).nullable().optional(),
+  admittedAt: z.string().datetime().nullable().optional(),
+  dischargedAt: z.string().datetime().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export async function recordEyeAssessment(input: z.input<typeof recordEyeAssessmentSchema>, options: CommandOptions = {}) {
+  const values = recordEyeAssessmentSchema.parse(input);
+  return runCommand({ facilityId: values.facilityId, idempotencyKey: values.idempotencyKey }, "recordEyeAssessment", async (tx) => {
+    const [branch] = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.id, values.branchId), eq(branches.facilityId, values.facilityId))).limit(1);
+    if (!branch) throw new Error("Branch not found for this facility");
+    const [patient] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.id, values.patientId), eq(patients.facilityId, values.facilityId))).limit(1);
+    if (!patient) throw new Error("Patient not found for this facility");
+    const [encounter] = await tx.select({ id: encounters.id }).from(encounters).where(and(eq(encounters.id, values.encounterId), eq(encounters.facilityId, values.facilityId), eq(encounters.patientId, values.patientId))).limit(1);
+    if (!encounter) throw new Error("Encounter not found for this patient");
+    const [row] = await tx.insert(eyeAssessments).values({
+      facilityId: values.facilityId,
+      branchId: values.branchId,
+      encounterId: values.encounterId,
+      patientId: values.patientId,
+      visitedAt: values.visitedAt ? new Date(values.visitedAt) : new Date(),
+      visitType: values.visitType,
+      visualAcuity: values.visualAcuity,
+      vaRight: values.vaRight ?? null,
+      vaLeft: values.vaLeft ?? null,
+      disabilityType: values.disabilityType ?? null,
+      diagnosisCode: values.diagnosisCode,
+      impression: values.impression ?? null,
+      management: values.management ?? null,
+      referral: values.referral ?? null,
+      county: values.county ?? null,
+      residence: values.residence ?? null,
+      phone: values.phone ?? null,
+      registeredBy: values.registeredBy ?? null,
+      seenBy: values.seenBy ?? null,
+      timeRegistered: values.timeRegistered ? new Date(values.timeRegistered) : null,
+      timeSeen: values.timeSeen ? new Date(values.timeSeen) : null,
+      lastStage: values.lastStage ?? null,
+      admittedAt: values.admittedAt ? new Date(values.admittedAt) : null,
+      dischargedAt: values.dischargedAt ? new Date(values.dischargedAt) : null,
+      notes: values.notes ?? null,
+      createdBy: values.actor.userId,
+      version: 1,
+    }).returning({ id: eyeAssessments.id });
+    await auditReport(tx, {
+      facilityId: values.facilityId,
+      userId: values.actor.userId,
+      ip: values.actor.ip,
+      deviceId: values.actor.deviceId,
+      action: "eye_assessment_recorded",
+      entity: "eye_assessment",
+      entityId: row.id,
+      details: { patientId: values.patientId, diagnosisCode: values.diagnosisCode, visitType: values.visitType },
+    });
+    return { eyeAssessmentId: row.id };
   }, options);
 }

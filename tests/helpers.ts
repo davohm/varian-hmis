@@ -46,6 +46,7 @@ import {
   employees,
   employmentContracts,
   encounters,
+  eyeAssessments,
   etimsInvoiceLines,
   etimsInvoiceQueue,
   etimsOutbox,
@@ -63,6 +64,7 @@ import {
   integrationSettings,
   invoices,
   itemBatches,
+  immunizations,
   items,
   journalEntries,
   journalLines,
@@ -334,6 +336,8 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
     await tx.delete(labOrderItems).where(eq(labOrderItems.facilityId, facilityId));
     await tx.delete(labOrders).where(eq(labOrders.facilityId, facilityId));
     await tx.delete(prescriptions).where(eq(prescriptions.facilityId, facilityId));
+    await tx.delete(immunizations).where(eq(immunizations.facilityId, facilityId));
+    await tx.delete(eyeAssessments).where(eq(eyeAssessments.facilityId, facilityId));
     await tx.delete(diagnoses).where(eq(diagnoses.facilityId, facilityId));
     await tx.delete(clinicalNotes).where(eq(clinicalNotes.facilityId, facilityId));
     await tx.delete(items).where(eq(items.facilityId, facilityId));
