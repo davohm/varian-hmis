@@ -3,7 +3,7 @@ import { and, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { computeReportChecksum, getEpiWeek } from "@/lib/reporting";
 import { emptyCellsFromTemplate, finalizeDailyTotals, moh505Template, moh710ATemplate, moh710BTemplate, moh416Template, moh735Template, moh717Template, moh705ATemplate, moh705BTemplate, setCell, type MohCell, type MohReportCode } from "@/lib/moh-reporting";
 import type { db } from "@/server/db/client";
-import { diagnoses, encounters, notifiableEvents, patients } from "@/server/db/schema";
+import { birthNotifications, deathNotifications, diagnoses, encounters, notifiableEvents, patients } from "@/server/db/schema";
 
 export type ReportingDb = typeof db;
 
@@ -227,6 +227,15 @@ export async function generateMoh717(database: ReportingDb, input: GenerateMohIn
     const total = ["A.1.1", "A.1.2", "A.1.3", "A.1.4"].reduce((n, rc) => n + Number(cells.find((c) => c.section === "A1" && c.rowCode === rc && c.colKey === col)?.valueNumeric ?? 0), 0);
     setCell(cells, "A1", "A.1.5T", col, total);
   }
+
+  const births = await database.select({ id: birthNotifications.id }).from(birthNotifications).where(and(eq(birthNotifications.facilityId, input.facilityId), gte(birthNotifications.birthDate, input.periodStart), lte(birthNotifications.birthDate, input.periodEnd)));
+  const deaths = await database.select({ id: deathNotifications.id }).from(deathNotifications).where(and(eq(deathNotifications.facilityId, input.facilityId), gte(deathNotifications.dateOfDeath, input.periodStart), lte(deathNotifications.dateOfDeath, input.periodEnd)));
+  setCell(cells, "B", "B.1", "new", births.length, `SELECT id FROM birth_notifications WHERE facility='${input.facilityId}' AND birth_date BETWEEN '${input.periodStart}' AND '${input.periodEnd}'`);
+  setCell(cells, "B", "B.1", "re_att", 0);
+  setCell(cells, "B", "B.1", "total", births.length);
+  setCell(cells, "B", "B.2", "new", deaths.length, `SELECT id FROM death_notifications WHERE facility='${input.facilityId}' AND date_of_death BETWEEN '${input.periodStart}' AND '${input.periodEnd}'`);
+  setCell(cells, "B", "B.2", "re_att", 0);
+  setCell(cells, "B", "B.2", "total", deaths.length);
   return cells;
 }
 

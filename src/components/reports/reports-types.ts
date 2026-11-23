@@ -15,12 +15,51 @@ export interface ReportCatalogueRow {
   enabled: boolean;
 }
 
+export interface MohReportRunRow {
+  id: string;
+  reportCode: string;
+  reportName: string;
+  branchId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  epiWeek: number | null;
+  epiYear: number | null;
+  month: number | null;
+  year: number | null;
+  status: string;
+  rowCount: number | null;
+  checksum: string | null;
+  generatedAt: string | null;
+  submittedAt: string | null;
+  acknowledgementRef: string | null;
+  exportedFile: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+}
+
+export interface MohReportCellRow {
+  id: string;
+  section: string | null;
+  rowCode: string | null;
+  rowLabel: string | null;
+  colKey: string | null;
+  colLabel: string | null;
+  valueNumeric: string | null;
+  valueText: string | null;
+  sortOrder: number;
+  isTotal: boolean | null;
+  sourceQuery: string | null;
+}
+
 export interface ReportsApiData {
   catalogue: ReportCatalogueRow[];
   savedViews: SavedReportViewRow[];
   approvalInbox: ApprovalInboxRow[];
   reportData: ErpReportData | null;
   drillDown: ReportDrillDownData | null;
+  mohRuns?: MohReportRunRow[];
+  mohCells?: MohReportCellRow[];
+  mohAuditTrail?: Array<{ id: string; action: string; entity: string; entityId: string | null; createdAt: string; actorId: string | null; details: unknown }>;
 }
 
 export function formatMoney(value: string | number | null | undefined): string {

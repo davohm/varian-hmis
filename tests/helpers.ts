@@ -161,7 +161,7 @@ export async function insertTestFacility(db: TestDatabase["db"]) {
 
   // Billing is gated on the seeded §6.6 settings (invoice prefix), exactly as
   // a real install is, so every test facility gets the same defaults.
-  await seedRegulatoryDefaults(db, id, { createdBy: "vitest" });
+  await seedRegulatoryDefaults(db, id, { createdBy: "vitest", effectiveFrom: "2020-01-01" });
 
   return { id, code };
 }

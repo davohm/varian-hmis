@@ -155,6 +155,10 @@ export function moh717Template(): MohReportTemplate {
         { rowCode: "A.3.11", rowLabel: "MOPC clinic" },
         { rowCode: "A.3.12", rowLabel: "Nutrition" },
       ]},
+      { key: "B", label: "B. Births and deaths", columns: cols, rows: [
+        { rowCode: "B.1", rowLabel: "Birth notifications" },
+        { rowCode: "B.2", rowLabel: "Death notifications" },
+      ]},
     ],
   };
 }

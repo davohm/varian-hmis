@@ -444,12 +444,17 @@ export async function regenerateReportRun(input: z.input<typeof regenerateReport
     if (!cat || !isMohReportCode(cat.reportCode)) throw new Error("Only MOH statutory runs can be regenerated here");
     const reportCode = cat.reportCode as MohReportCode;
     const cells = await generateMohReport(tx as unknown as ReportingDatabase, { facilityId: values.facilityId, branchId: run.branchId, reportCode, periodStart: String(run.periodStart), periodEnd: String(run.periodEnd), month: run.month ?? Number(String(run.periodStart).slice(5, 7)), year: run.year ?? Number(String(run.periodStart).slice(0, 4)), epiWeek: run.epiWeek, epiYear: run.epiYear });
-    await tx.delete(reportCells).where(eq(reportCells.reportRunId, run.id));
     const checksum = mohChecksum(cells);
-    if (cells.length) await tx.insert(reportCells).values(cells.map((c) => ({ facilityId: values.facilityId, reportRunId: run.id, section: c.section ?? null, rowCode: c.rowCode ?? null, rowLabel: c.rowLabel ?? null, colKey: c.colKey ?? null, colLabel: c.colLabel ?? null, valueNumeric: c.valueNumeric == null ? null : String(c.valueNumeric), valueText: c.valueText ?? null, sortOrder: c.sortOrder, isTotal: Boolean(c.isTotal), sourceQuery: c.sourceQuery ?? null })));
-    await tx.update(reportRuns).set({ status: "generated", rowCount: cells.length, checksum, generatedBy: values.actor.userId, generatedAt: new Date(), updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
-    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_regenerated", entity: "report_run", entityId: run.id, details: { reportCode, checksum, rowCount: cells.length } });
-    return { runId: run.id, checksum, rowCount: cells.length };
+    await tx.update(reportRuns).set({ status: "void", voidedAt: new Date(), voidReason: "Regenerated", updatedAt: new Date(), version: sql`${reportRuns.version} + 1` }).where(eq(reportRuns.id, run.id));
+    const [newRun] = await tx.insert(reportRuns).values({
+      facilityId: values.facilityId, reportId: run.reportId, branchId: run.branchId,
+      periodStart: run.periodStart, periodEnd: run.periodEnd, epiWeek: run.epiWeek, epiYear: run.epiYear,
+      month: run.month, year: run.year, status: "generated", rowCount: cells.length, checksum,
+      generatedBy: values.actor.userId, generatedAt: new Date(), createdBy: values.actor.userId, version: (run.version ?? 1) + 1,
+    }).returning({ id: reportRuns.id });
+    if (cells.length) await tx.insert(reportCells).values(cells.map((c) => ({ facilityId: values.facilityId, reportRunId: newRun.id, section: c.section ?? null, rowCode: c.rowCode ?? null, rowLabel: c.rowLabel ?? null, colKey: c.colKey ?? null, colLabel: c.colLabel ?? null, valueNumeric: c.valueNumeric == null ? null : String(c.valueNumeric), valueText: c.valueText ?? null, sortOrder: c.sortOrder, isTotal: Boolean(c.isTotal), sourceQuery: c.sourceQuery ?? null })));
+    await auditReport(tx, { facilityId: values.facilityId, userId: values.actor.userId, ip: values.actor.ip, deviceId: values.actor.deviceId, action: "report_regenerated", entity: "report_run", entityId: newRun.id, details: { reportCode, checksum, rowCount: cells.length, previousRunId: run.id } });
+    return { runId: newRun.id, previousRunId: run.id, checksum, rowCount: cells.length };
   }, options);
 }
 

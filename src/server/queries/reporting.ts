@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 
 import { fromCents, sumAmounts, toCents } from "@/lib/billing";
 import {
@@ -30,7 +30,10 @@ import {
   journalEntries,
   journalLines,
   ledgerAccounts,
+  diagnoses,
+  encounters,
   notifiableEvents,
+  patients,
   payrollRuns,
   purchaseOrders,
   purchaseRequisitions,
@@ -1116,10 +1119,65 @@ export async function getReportCells(database: ReportingDatabase, facilityId: st
   return database.select().from(reportCells).where(and(eq(reportCells.facilityId, facilityId), eq(reportCells.reportRunId, runId))).orderBy(asc(reportCells.sortOrder));
 }
 
+function ageAt(date: Date | string | null, ref: Date): number {
+  if (!date) return 999;
+  const d = date instanceof Date ? date : new Date(date);
+  let age = ref.getUTCFullYear() - d.getUTCFullYear();
+  const m = ref.getUTCMonth() - d.getUTCMonth();
+  if (m < 0 || (m === 0 && ref.getUTCDate() < d.getUTCDate())) age--;
+  return age;
+}
+function matches705A(row: string, diagnosis: string | null) {
+  const d = (diagnosis ?? "").toLowerCase();
+  const map: Record<string, string[]> = { "1":["diarrhoea no dehydration","diarrhea no dehydration"],"2":["diarrhoea some dehydration","diarrhea some dehydration"],"3":["diarrhoea severe dehydration","diarrhea severe dehydration"],"4":["cholera"],"5":["dysentery","bloody diarrhoea"],"6":["gastroenteritis"],"7":["pneumonia"],"8":["severe pneumonia"],"9":["upper respiratory","urti"],"10":["lower respiratory","lrti"],"11":["asthma"],"12":["presumed tuberculosis","tuberculosis"],"13":["suspected malaria"],"14":["tested for malaria"],"15":["confirmed malaria"],"16":["ear infection","otitis"],"17":["malnutrition"],"18":["anaemia","anemia"],"19":["meningococcal meningitis"],"20":["meningitis"] };
+  const needles = map[row];
+  if (!needles) return row === "25" ? !!d : false;
+  return needles.some((n) => d.includes(n));
+}
+function matches705B(row: string, diagnosis: string | null) {
+  const d = (diagnosis ?? "").toLowerCase();
+  const map: Record<string, string[]> = { "1":["diarrhoea","diarrhea"],"2":["tuberculosis"],"3":["dysentery","bloody diarrhoea"],"4":["cholera"],"5":["meningococcal meningitis"],"6":["meningitis"],"7":["tetanus"],"8":["poliomyelitis","afp"],"9":["chicken pox","varicella"],"10":["measles"],"11":["hepatitis"],"12":["mumps"],"13":["suspected malaria"],"14":["confirmed malaria"],"15":["malaria in pregnancy"],"16":["amoebiasis"],"17":["typhoid"],"18":["sexually transmitted","sti"],"19":["urinary tract","uti"],"20":["bilharzia","schistosomiasis"],"21":["intestinal worms","helminth"],"22":["malnutrition"],"23":["anaemia","anemia"],"24":["eye infection","eye condition"],"25":["ear infection","ear condition"],"26":["upper respiratory","urti"],"27":["asthma"],"28":["pneumonia"],"29":["other lower respiratory"],"30":["abortion"],"31":["puerperium","childbirth"],"32":["hypertension"],"33":["mental disorder"],"34":["dental"],"35":["jiggers"],"36":["skin"],"37":["arthritis","joint pain"],"38":["poisoning"],"39":["road traffic"],"40":["death due to road traffic"],"41":["injury"],"42":["sexual violence"],"43":["violence related"],"44":["burn"],"45":["snake bite"],"46":["dog bite"],"47":["diabetes"],"48":["epilepsy"],"49":["convulsive"],"50":["rheumatic fever"],"51":["brucellosis"],"52":["rickets"],"53":["cerebral palsy"] };
+  const needles = map[row];
+  if (!needles) return row === "54" ? !!d : false;
+  return needles.some((n) => d.includes(n));
+}
+
 export async function drillDownReportCell(database: ReportingDatabase, facilityId: string, runId: string, rowCode: string, colKey: string) {
   const [cell] = await database.select().from(reportCells).where(and(eq(reportCells.facilityId, facilityId), eq(reportCells.reportRunId, runId), eq(reportCells.rowCode, rowCode), eq(reportCells.colKey, colKey))).limit(1);
   if (!cell) return null;
-  return { cell, sourceQuery: cell.sourceQuery, note: "Source query is recorded at generation time; execute in a controlled reporting context for row-level evidence." };
+  const [run] = await database.select({ reportId: reportRuns.reportId, periodStart: reportRuns.periodStart, periodEnd: reportRuns.periodEnd }).from(reportRuns).where(and(eq(reportRuns.facilityId, facilityId), eq(reportRuns.id, runId))).limit(1);
+  const [cat] = run ? await database.select({ reportCode: reportCatalogue.reportCode }).from(reportCatalogue).where(eq(reportCatalogue.id, run.reportId)).limit(1) : [undefined];
+  const reportCode = cat?.reportCode;
+  if (run && (reportCode === "MOH705A" || reportCode === "MOH705B") && colKey.startsWith("d")) {
+    const day = colKey.slice(1);
+    const dateStr = `${String(run.periodStart).slice(0, 7)}-${day}`;
+    const rows = await database.select({ encounterId: encounters.id, startedAt: encounters.startedAt, patientId: encounters.patientId, dob: patients.dob, sex: patients.sex, diagnosis: diagnoses.description, icd10: diagnoses.icd10Code })
+      .from(encounters)
+      .innerJoin(patients, eq(patients.id, encounters.patientId))
+      .leftJoin(diagnoses, eq(diagnoses.encounterId, encounters.id))
+      .where(and(eq(encounters.facilityId, facilityId), gte(encounters.startedAt, new Date(`${dateStr}T00:00:00.000Z`)), lte(encounters.startedAt, new Date(`${dateStr}T23:59:59.999Z`))));
+    const matched = rows.filter((r) => {
+      const started = r.startedAt instanceof Date ? r.startedAt : new Date(String(r.startedAt));
+      const age = ageAt(r.dob, started);
+      if (reportCode === "MOH705A" && age >= 5) return false;
+      if (reportCode === "MOH705B" && age < 5) return false;
+      if (rowCode === "99") return !!r.diagnosis;
+      return reportCode === "MOH705A" ? matches705A(rowCode, r.diagnosis) : matches705B(rowCode, r.diagnosis);
+    }).map((r) => ({ encounterId: r.encounterId, patientId: r.patientId, startedAt: r.startedAt instanceof Date ? r.startedAt.toISOString() : String(r.startedAt), sex: r.sex, diagnosis: r.diagnosis, icd10: r.icd10 }));
+    return { cell, sourceQuery: cell.sourceQuery, sourceRows: matched };
+  }
+  if (run && reportCode === "MOH505") {
+    const diseaseMap: Record<string, string[]> = { AJ: ["acute jaundice"], AM: ["acute malnutrition"], AEFI: ["aefi", "adverse events following immunization"], AFP: ["afp", "poliomyelitis", "acute flaccid paralysis"], ANT: ["anthrax"], CHOL: ["cholera"], DENG: ["dengue"], DYS: ["dysentery", "bacillary"], GWD: ["guinea worm"], MAL: ["malaria"], MATD: ["maternal death"], MEA: ["measles"], NEOD: ["neonatal death"], NNT: ["neonatal tetanus"], PLG: ["plague"], RAB: ["rabies"], RVF: ["rift valley fever"], SARI: ["sari"], MDRTB: ["mdr", "xdr", "tuberculosis"], TYP: ["typhoid"], VHF: ["vhf", "viral haemorrhagic"], YF: ["yellow fever"] };
+    const needles = diseaseMap[rowCode] ?? [];
+    const rows = await database.select().from(notifiableEvents).where(and(eq(notifiableEvents.facilityId, facilityId), gte(notifiableEvents.detectedAt, new Date(`${String(run.periodStart)}T00:00:00.000Z`)), lte(notifiableEvents.detectedAt, new Date(`${String(run.periodEnd)}T23:59:59.999Z`))));
+    const matched = rows.filter((r) => {
+      const name = (r.diseaseName ?? r.diseaseCode ?? "").toLowerCase();
+      if (rowCode === "OTH") return !Object.values(diseaseMap).flat().some((n) => name.includes(n));
+      return needles.some((n) => name.includes(n));
+    }).map((r) => ({ eventId: r.id, diseaseName: r.diseaseName, detectedAt: r.detectedAt instanceof Date ? r.detectedAt.toISOString() : String(r.detectedAt), status: r.status, patientId: r.patientId }));
+    return { cell, sourceQuery: cell.sourceQuery, sourceRows: matched };
+  }
+  return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
 }
 
 export async function listNotifiableEvents(database: ReportingDatabase, facilityId: string, options: { status?: string; limit?: number } = {}) {
