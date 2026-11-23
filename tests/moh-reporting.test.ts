@@ -426,4 +426,44 @@ describe("Phase 20 MOH statutory reporting", () => {
       expect(outbox.length).toBeGreaterThanOrEqual(1);
     } finally { await cleanupTestFacility(db, facilityId); }
   });
+
+  it("12. submit/void/export/notifiable/birth/death commands write audit rows and replay safely", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    try {
+      const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH705A" as const, year: 2026, month: 5, today: "2026-11-22" }), { database: db });
+      const submitKey = newIdempotencyKey();
+      const sub1 = await submitReportRun({ facilityId, idempotencyKey: submitKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen.runId }, { database: db });
+      const sub2 = await submitReportRun({ facilityId, idempotencyKey: submitKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen.runId }, { database: db });
+      expect(sub2.runId).toBe(sub1.runId);
+
+      const gen2 = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH705A" as const, year: 2026, month: 4, today: "2026-11-22" }), { database: db });
+      const voidKey = newIdempotencyKey();
+      const v1 = await voidReportRun({ facilityId, idempotencyKey: voidKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen2.runId, reason: "test void" }, { database: db });
+      const v2 = await voidReportRun({ facilityId, idempotencyKey: voidKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen2.runId, reason: "test void" }, { database: db });
+      expect(v2.runId).toBe(v1.runId);
+
+      const exp = await exportReportRun(cmd(facilityId, actorId, { runId: gen.runId, format: "csv" as const }), { database: db });
+      expect(exp.checksum).toBe(gen.checksum);
+
+      const nKey = newIdempotencyKey();
+      const n1 = await createNotifiableEvent({ facilityId, idempotencyKey: nKey, actor: { userId: actorId, deviceId: "vitest" }, diseaseName: "Measles", detectedAt: "2026-10-01T08:00:00.000Z" }, { database: db });
+      const n2 = await createNotifiableEvent({ facilityId, idempotencyKey: nKey, actor: { userId: actorId, deviceId: "vitest" }, diseaseName: "Measles", detectedAt: "2026-10-01T08:00:00.000Z" }, { database: db });
+      expect(n2.eventId).toBe(n1.eventId);
+
+      const bKey = newIdempotencyKey();
+      const b1 = await createBirthNotification({ facilityId, idempotencyKey: bKey, actor: { userId: actorId, deviceId: "vitest" }, birthDate: "2026-10-01" }, { database: db });
+      const b2 = await createBirthNotification({ facilityId, idempotencyKey: bKey, actor: { userId: actorId, deviceId: "vitest" }, birthDate: "2026-10-01" }, { database: db });
+      expect(b2.notificationId).toBe(b1.notificationId);
+
+      const dKey = newIdempotencyKey();
+      const d1 = await createDeathNotification({ facilityId, idempotencyKey: dKey, actor: { userId: actorId, deviceId: "vitest" }, dateOfDeath: "2026-10-02" }, { database: db });
+      const d2 = await createDeathNotification({ facilityId, idempotencyKey: dKey, actor: { userId: actorId, deviceId: "vitest" }, dateOfDeath: "2026-10-02" }, { database: db });
+      expect(d2.notificationId).toBe(d1.notificationId);
+
+      const auditRows = await db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.facilityId, facilityId));
+      expect(auditRows.length).toBeGreaterThanOrEqual(6);
+      const outboxRows = await db.select({ id: syncOutbox.outboxId }).from(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
+      expect(outboxRows.length).toBeGreaterThanOrEqual(6);
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
 });
