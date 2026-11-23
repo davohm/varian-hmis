@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { REPORT_READ_ROLES, REPORT_WRITE_ROLES } from "@/lib/navigation";
 import { isErpReportCode } from "@/lib/reporting";
-import { cellsToCsv, cellsToPrintHtml, cellsToXlsHtml, exportChecksum } from "@/lib/moh-export";
+import { cellsToCsv, cellsToPdfBytes, cellsToXlsxBytes, exportChecksum } from "@/lib/moh-export";
 import { apiErrorResponse } from "@/server/auth/api-error";
 import { requireApiFacility } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
@@ -81,15 +81,17 @@ export async function GET(request: NextRequest) {
       const checksum = exportChecksum(mapped);
       const periodLabel = `${run.periodStart} to ${run.periodEnd}`;
       const meta = { facilityName: facility?.name ?? null, county: (profile?.county as string | null) ?? null, subCounty: (profile?.subCounty as string | null) ?? null, ward: (profile?.ward as string | null) ?? null, mflCode: (profile?.mflCode as string | null) ?? (profile?.facilityRegistryId as string | null) ?? null, epiWeek: run.epiWeek != null ? String(run.epiWeek) : null, epiYear: run.epiYear ?? null, weekEnding: run.periodEnd ?? null, month: run.periodStart ? String(run.periodStart).slice(0, 7) : null, year: run.periodStart ? Number(String(run.periodStart).slice(0, 4)) : null };
-      const filename = `${cat?.reportCode ?? "report"}-${run.periodEnd}.${exportFormat === "xlsx" ? "xls" : exportFormat === "pdf" ? "html" : "csv"}`;
+      const filename = `${cat?.reportCode ?? "report"}-${run.periodEnd}.${exportFormat}`;
       if (exportFormat === "csv") {
         return new NextResponse(cellsToCsv(mapped), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       if (exportFormat === "xlsx") {
-        return new NextResponse(cellsToXlsHtml(cat?.reportCode ?? "MOH", periodLabel, mapped, meta), { headers: { "Content-Type": "application/vnd.ms-excel; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
+        const bytes = cellsToXlsxBytes(cat?.reportCode ?? "MOH", periodLabel, mapped, meta);
+        return new NextResponse(new Uint8Array(bytes), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       if (exportFormat === "pdf") {
-        return new NextResponse(cellsToPrintHtml(cat?.reportCode ?? "MOH", cat?.name ?? "MOH Report", periodLabel, checksum, mapped, meta), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `inline; filename="${filename}"`, "X-Report-Checksum": checksum } });
+        const bytes = cellsToPdfBytes(cat?.reportCode ?? "MOH", cat?.name ?? "MOH Report", periodLabel, checksum, mapped, meta);
+        return new NextResponse(new Uint8Array(bytes), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${filename}"`, "X-Report-Checksum": checksum } });
       }
       return NextResponse.json({ error: "Unsupported export format" }, { status: 400 });
     }

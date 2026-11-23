@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
 import { createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateReportRun, regenerateReportRun, submitNotifiableEvent, submitReportRun, voidReportRun } from "../src/server/commands/reporting";
 import { auditLog, diagnoses, encounters, fiscalPeriods, patients, reportCells, reportRuns, staffRoleScopes, syncOutbox } from "../src/server/db/schema";
-import { exportChecksum } from "../src/lib/moh-export";
+import { cellsToPdfBytes, cellsToXlsxBytes, exportChecksum } from "../src/lib/moh-export";
 import { drillDownReportCell, getReportCells, getReportRunAuditTrail } from "../src/server/queries/reporting";
 import { cleanupTestFacility, createTestDatabase, insertTestActor, insertTestBranch, insertTestFacility } from "./helpers";
 
@@ -535,5 +535,15 @@ describe("Phase 20 MOH statutory reporting", () => {
       const outbox = await db.select({ id: syncOutbox.outboxId }).from(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
       expect(outbox.length).toBeGreaterThanOrEqual(3);
     } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("7. binary XLSX and PDF exports are real files with checksum metadata", () => {
+    const cells = [{ section: "A", rowCode: "1", rowLabel: "Cholera", colKey: "d01", colLabel: "01", valueNumeric: "2", valueText: null, sortOrder: 1, isTotal: false }];
+    const xlsx = cellsToXlsxBytes("MOH705A", "2026-10-01 to 2026-10-31", cells);
+    expect(Array.from(xlsx.slice(0, 4))).toEqual([80, 75, 3, 4]);
+    expect(new TextDecoder().decode(xlsx)).toContain("xl/worksheets/sheet1.xml");
+    const pdf = cellsToPdfBytes("MOH705A", "MOH 705A", "2026-10-01 to 2026-10-31", exportChecksum(cells), cells);
+    expect(new TextDecoder().decode(pdf.slice(0, 8))).toBe("%PDF-1.4");
+    expect(new TextDecoder().decode(pdf)).toContain("Checksum:");
   });
 });

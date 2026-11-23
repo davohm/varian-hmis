@@ -115,7 +115,7 @@ export function ReportsWorkspace({ canWrite }: { canWrite: boolean }) {
     anchor.href = url;
     anchor.target = "_blank";
     anchor.rel = "noopener";
-    if (format !== "pdf") anchor.download = `${reportCode}-${selectedRun?.periodEnd ?? to}.${format === "xlsx" ? "xls" : "csv"}`;
+    if (format !== "pdf") anchor.download = `${reportCode}-${selectedRun?.periodEnd ?? to}.${format}`;
     anchor.click();
   }
 
