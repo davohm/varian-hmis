@@ -2,7 +2,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
-import { createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateReportRun, regenerateReportRun, submitReportRun, voidReportRun } from "../src/server/commands/reporting";
+import { createBirthNotification, createDeathNotification, createNotifiableEvent, exportReportRun, generateReportRun, regenerateReportRun, submitNotifiableEvent, submitReportRun, voidReportRun } from "../src/server/commands/reporting";
 import { auditLog, diagnoses, encounters, fiscalPeriods, patients, reportCells, reportRuns, staffRoleScopes, syncOutbox } from "../src/server/db/schema";
 import { exportChecksum } from "../src/lib/moh-export";
 import { drillDownReportCell, getReportCells, getReportRunAuditTrail } from "../src/server/queries/reporting";
@@ -464,6 +464,76 @@ describe("Phase 20 MOH statutory reporting", () => {
       expect(auditRows.length).toBeGreaterThanOrEqual(6);
       const outboxRows = await db.select({ id: syncOutbox.outboxId }).from(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
       expect(outboxRows.length).toBeGreaterThanOrEqual(6);
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("identity 2: 705B day total reconciles to qualifying encounters+diagnoses for that day", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
+    try {
+      const p = newId();
+      await db.insert(patients).values({ id: p, facilityId, mrn: `MRN-RB-${newId().slice(0, 8)}`, firstName: "Over", lastName: "Five", dob: "2000-01-01", sex: "male", payerType: "cash", createdBy: "vitest" });
+      const e = newId();
+      await db.insert(encounters).values({ id: e, facilityId, branchId, patientId: p, encounterNo: `ENC-RB-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-05T09:00:00.000Z"), createdBy: "vitest" });
+      await db.insert(diagnoses).values({ id: newId(), facilityId, encounterId: e, icd10Code: "A09", description: "Diarrhoea", isPrimary: true, diagnosedBy: "vitest", createdBy: "vitest" });
+      const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH705B" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells = await getReportCells(db, facilityId, gen.runId);
+      const day5 = cells.filter((c) => c.section === "A" && c.rowCode !== "99" && c.colKey === "d05").reduce((n, c) => n + Number(c.valueNumeric ?? 0), 0);
+      expect(day5).toBe(1);
+      const dd = await drillDownReportCell(db, facilityId, gen.runId, "1", "d05");
+      expect((dd?.sourceRows as Array<Record<string, unknown>>).length).toBe(1);
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("identity 7: 416 net seen = total seen - total not seen", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    const branchId = await insertTestBranch(db, facilityId);
+    try {
+      const p = newId();
+      await db.insert(patients).values({ id: p, facilityId, mrn: `MRN-416N-${newId().slice(0, 8)}`, firstName: "Eye", lastName: "Net", dob: "1990-01-01", sex: "female", payerType: "cash", createdBy: "vitest" });
+      await db.insert(encounters).values({ id: newId(), facilityId, branchId, patientId: p, encounterNo: `ENC-416N-${newId().slice(0, 8)}`, status: "discharged", payerType: "cash", startedAt: new Date("2026-10-09T09:00:00.000Z"), createdBy: "vitest" });
+      const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH416" as const, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+      const cells = await getReportCells(db, facilityId, gen.runId);
+      const val = (row: string) => Number(cells.find((c) => c.rowCode === row && c.colKey === "value")?.valueNumeric ?? 0);
+      expect(val("net_seen")).toBe(val("total_seen") - val("total_not_seen"));
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("11. drill-down returns explicit provenance for 710A/710B/735 template-sourced cells", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    try {
+      for (const reportCode of ["MOH710A", "MOH710B", "MOH735"] as const) {
+        const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode, year: 2026, month: 10, today: "2026-11-22" }), { database: db });
+        const cells = await getReportCells(db, facilityId, gen.runId);
+        const first = cells[0];
+        expect(first).toBeTruthy();
+        const dd = await drillDownReportCell(db, facilityId, gen.runId, first!.rowCode ?? "", first!.colKey ?? "");
+        expect(dd?.sourceQuery).toBeTruthy();
+        expect(Array.isArray(dd?.sourceRows)).toBe(true);
+        expect((dd?.sourceRows as Array<Record<string, unknown>>)[0]?.provenance).toBe("template");
+      }
+    } finally { await cleanupTestFacility(db, facilityId); }
+  });
+
+  it("12. regenerate and submitNotifiableEvent write audit/outbox and replay safely", async () => {
+    const { facilityId, actorId } = await makeFacility();
+    try {
+      const gen = await generateReportRun(cmd(facilityId, actorId, { reportCode: "MOH705A" as const, year: 2026, month: 3, today: "2026-11-22" }), { database: db });
+      const regKey = newIdempotencyKey();
+      const r1 = await regenerateReportRun({ facilityId, idempotencyKey: regKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen.runId, today: "2026-11-22" }, { database: db });
+      const r2 = await regenerateReportRun({ facilityId, idempotencyKey: regKey, actor: { userId: actorId, deviceId: "vitest" }, runId: gen.runId, today: "2026-11-22" }, { database: db });
+      expect(r2.runId).toBe(r1.runId);
+
+      const evt = await createNotifiableEvent(cmd(facilityId, actorId, { diseaseName: "Cholera", detectedAt: "2026-10-01T08:00:00.000Z" }), { database: db });
+      const subKey = newIdempotencyKey();
+      const s1 = await submitNotifiableEvent({ facilityId, idempotencyKey: subKey, actor: { userId: actorId, deviceId: "vitest" }, eventId: evt.eventId, reportedTo: "County DDSR" }, { database: db });
+      const s2 = await submitNotifiableEvent({ facilityId, idempotencyKey: subKey, actor: { userId: actorId, deviceId: "vitest" }, eventId: evt.eventId, reportedTo: "County DDSR" }, { database: db });
+      expect(s2.eventId).toBe(s1.eventId);
+
+      const audits = await db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.facilityId, facilityId));
+      expect(audits.length).toBeGreaterThanOrEqual(3);
+      const outbox = await db.select({ id: syncOutbox.outboxId }).from(syncOutbox).where(eq(syncOutbox.facilityId, facilityId));
+      expect(outbox.length).toBeGreaterThanOrEqual(3);
     } finally { await cleanupTestFacility(db, facilityId); }
   });
 });

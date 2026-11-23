@@ -1225,7 +1225,18 @@ export async function drillDownReportCell(database: ReportingDatabase, facilityI
     return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
   }
   if (run && (reportCode === "MOH710A" || reportCode === "MOH710B" || reportCode === "MOH735")) {
-    return { cell, sourceQuery: cell.sourceQuery ?? `${reportCode} cell derived from configured/template operational sources; no row-level source mapped in current generator`, sourceRows: [] };
+    const sourceQuery = cell.sourceQuery ?? `${reportCode} cell derived from template/generator output; no row-level operational source mapped in current generator`;
+    return {
+      cell,
+      sourceQuery,
+      sourceRows: [{
+        provenance: "template",
+        reportCode,
+        rowCode,
+        colKey,
+        note: "No row-level operational source table is mapped for this report cell in the current generator.",
+      }],
+    };
   }
   return { cell, sourceQuery: cell.sourceQuery, sourceRows: [] };
 }
