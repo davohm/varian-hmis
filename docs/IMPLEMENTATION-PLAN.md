@@ -1,14 +1,14 @@
 # Varian HMIS — Implementation Plan
 
-Status recorded on 2026-11-22. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, Phase 15 as `542f7b356d8558a3882de0ef5c23d8c52fbf9752`, Phase 16 as `2bc2d666264d7edd2eb89edc09bf4e71bdb70a1d`, and Phase 17 is complete and verified with migration `0031_erp_reporting_controls.sql` in the current ship commit.
+Status recorded on 2026-11-23. Phase 12 is deployed as `c44f9fd`, Phase 13 as `05360b0`, Phase 14 as `db0d0ec102793eb7681dc4ea822cd1e065eb38e4`, Phase 15 as `542f7b356d8558a3882de0ef5c23d8c52fbf9752`, Phase 16 as `2bc2d666264d7edd2eb89edc09bf4e71bdb70a1d`, Phase 17 is complete and verified with migration `0031_erp_reporting_controls.sql`, Phase 20 is deployed as `3a076d6`, and Phase 22 is shipped as `09be9be`.
 
 ## Current phase status
 
 | Status | Phases |
 |---|---|
-| Complete | 0-19, 21 |
-| Partial | 20 |
-| Missing | 22 |
+| Complete | 0-22 |
+| Partial | None |
+| Missing | None |
 
 ### Outstanding work summary
 
