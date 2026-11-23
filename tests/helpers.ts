@@ -116,6 +116,7 @@ import {
   services,
   session,
   shaAdjudicationCodes,
+  shaCoPayAssessments,
   shaEligibilityChecks,
   shaEmpanelments,
   shaPaymentReconciliation,
@@ -251,22 +252,26 @@ export async function cleanupTestFacility(db: TestDatabase["db"], facilityId: st
       .where(and(eq(payments.facilityId, facilityId), isNotNull(payments.reversedPaymentId)));
     await tx.delete(claimDenials).where(eq(claimDenials.facilityId, facilityId));
 
-    // SHA setup and cycle records reference claims, invoices and patients, so
-    // tear them down before those parents. Reconciliation lines precede their report.
+    // Claims reference SHA setup rows, so remove the cycle records first.
+    // Reconciliation lines precede their report; remittances and lines precede claims.
     await tx.delete(shaReconciliationLines).where(eq(shaReconciliationLines.facilityId, facilityId));
     await tx
       .delete(shaPaymentReconciliation)
       .where(eq(shaPaymentReconciliation.facilityId, facilityId));
+    await tx.delete(remittances).where(eq(remittances.facilityId, facilityId));
+    await tx.delete(claimLines).where(eq(claimLines.facilityId, facilityId));
+    await tx.delete(claims).where(eq(claims.facilityId, facilityId));
+
+    // SHA setup and cashier assessments reference patients, invoices and packages.
+    // Pre-authorisations reference benefit packages, so remove them before packages.
+    await tx.delete(preAuthorizations).where(eq(preAuthorizations.facilityId, facilityId));
     await tx.delete(shaWaivers).where(eq(shaWaivers.facilityId, facilityId));
+    await tx.delete(shaCoPayAssessments).where(eq(shaCoPayAssessments.facilityId, facilityId));
     await tx.delete(shaEligibilityChecks).where(eq(shaEligibilityChecks.facilityId, facilityId));
     await tx.delete(benefitPackageItems).where(eq(benefitPackageItems.facilityId, facilityId));
     await tx.delete(benefitPackages).where(eq(benefitPackages.facilityId, facilityId));
     await tx.delete(shaEmpanelments).where(eq(shaEmpanelments.facilityId, facilityId));
 
-    await tx.delete(remittances).where(eq(remittances.facilityId, facilityId));
-    await tx.delete(claimLines).where(eq(claimLines.facilityId, facilityId));
-    await tx.delete(claims).where(eq(claims.facilityId, facilityId));
-    await tx.delete(preAuthorizations).where(eq(preAuthorizations.facilityId, facilityId));
     await tx.delete(payerBenefits).where(eq(payerBenefits.facilityId, facilityId));
     await tx.delete(payerContracts).where(eq(payerContracts.facilityId, facilityId));
     await tx.delete(payers).where(eq(payers.facilityId, facilityId));

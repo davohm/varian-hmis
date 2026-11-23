@@ -1,9 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { toCents } from "../src/lib/billing";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "../src/lib/finance";
+import { SHA_COMMAND_NAMES, SHA_COMMAND_ROLES } from "../src/lib/sha-roles";
 import { newId, newIdempotencyKey } from "../src/lib/uuid";
 import { createLedgerAccount, postManualJournal } from "../src/server/commands/finance";
 import { createPayer } from "../src/server/commands/revenue";
@@ -15,6 +16,7 @@ import {
   createShaClaim,
   decideShaPreAuthorization,
   recordShaAdjudication,
+  recordShaCoPay,
   recordShaDenial,
   recordShaRemittance,
   reconcileShaPaymentReport,
@@ -27,6 +29,8 @@ import {
 } from "../src/server/commands/sha";
 import {
   auditLog,
+  benefitPackageItems,
+  benefitPackages,
   claimLines,
   claims,
   dataConsents,
@@ -35,9 +39,12 @@ import {
   facilityRegulatoryProfiles,
   invoices,
   patients,
+  preAuthorizations,
   remittances,
   shaAdjudicationCodes,
+  shaCoPayAssessments,
   shaEligibilityChecks,
+  shaEmpanelments,
   shaPaymentReconciliation,
   shaReconciliationLines,
   syncOutbox,
@@ -1357,6 +1364,539 @@ describe("Phase 22 — SHA / SHIF revenue cycle", () => {
           { database: ctx.db },
         ),
       ).rejects.toThrow("The claim approver cannot record a remittance");
+    });
+  });
+});
+
+describe("Phase 22 — final audit fix regressions", () => {
+  it("H1: createShaClaim persists the per-line SHA snapshot and claim totals", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const preauth = await requestShaPreAuthorization(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: PREPARER,
+          payerId: fixture.payerId,
+          patientId: fixture.patientId,
+          empanelmentId: setup.empanelmentId,
+          benefitPackageId: setup.benefitPackageId,
+          fund: "shif",
+          requestedAmount: "5000.00",
+          expiresAt: "2099-12-31",
+        },
+        { database: ctx.db },
+      );
+      await decideShaPreAuthorization(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          preAuthId: preauth.preAuthId,
+          decision: "approved",
+          approvedAmount: "5000.00",
+          expiresAt: "2099-12-31",
+        },
+        { database: ctx.db },
+      );
+
+      const claim = await createShaClaim(
+        claimInput(fixture, setup, {
+          preAuthId: preauth.preAuthId,
+          lines: [
+            { shaServiceCode: "CONS", description: "Consultation", amount: "1000.00" },
+            { shaServiceCode: "PART", description: "Part-covered procedure", amount: "1000.00" },
+            {
+              shaServiceCode: "EXCL",
+              description: "Cosmetic service",
+              amount: "500.00",
+              patientPay: true,
+            },
+            { shaServiceCode: "HIGH", description: "Inpatient admission", amount: "5000.00" },
+          ],
+        }),
+        { database: ctx.db },
+      );
+
+      expect(claim.total).toBe("7500.00");
+      expect(claim.billedAmount).toBe("6800.00");
+      expect(claim.patientCoPay).toBe("700.00");
+
+      const detail = await getShaClaim(ctx.db, fixture.facility.id, claim.claimId);
+      expect(detail?.tariffVersion).toBe("TARIFF-2026");
+      expect(detail?.billedAmount).toBe("6800.00");
+      expect(detail?.patientCoPay).toBe("700.00");
+      expect(toCents(detail!.billedAmount) + toCents(detail!.patientCoPay)).toBe(toCents(detail!.total));
+
+      const lineFor = (code: string) => detail!.lines.find((line) => line.shaServiceCode === code)!;
+      const cons = lineFor("CONS");
+      const part = lineFor("PART");
+      const excl = lineFor("EXCL");
+      const high = lineFor("HIGH");
+
+      expect(cons.shaCoverage).toBe("full");
+      expect(cons.shaBilledAmount).toBe("1000.00");
+      expect(cons.shaPatientAmount).toBe("0.00");
+      expect(cons.shaPreauthRequired).toBe(false);
+      expect(cons.shaPatientPay).toBe(false);
+      expect(toCents(cons.unitPrice)).toBe(100000);
+      expect(toCents(cons.quantity)).toBe(100);
+
+      expect(part.shaCoverage).toBe("partial");
+      expect(part.shaBilledAmount).toBe("800.00");
+      expect(part.shaPatientAmount).toBe("200.00");
+      expect(part.shaPreauthRequired).toBe(false);
+
+      expect(excl.shaCoverage).toBe("excluded");
+      expect(excl.shaBilledAmount).toBe("0.00");
+      expect(excl.shaPatientAmount).toBe("500.00");
+      expect(excl.shaPreauthRequired).toBe(false);
+      expect(excl.shaPatientPay).toBe(true);
+
+      expect(high.shaCoverage).toBe("full");
+      expect(high.shaBilledAmount).toBe("5000.00");
+      expect(high.shaPatientAmount).toBe("0.00");
+      expect(high.shaPreauthRequired).toBe(true);
+    });
+  });
+
+  it("H1: submitShaClaim refuses a stale benefit package, line snapshot or claim total", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const submit = (claimId: string) =>
+        submitShaClaim(
+          {
+            facilityId: fixture.facility.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: SUBMITTER,
+            claimId,
+          },
+          { database: ctx.db },
+        );
+
+      // A package edit after drafting must not silently change submitted pricing.
+      const stalePackageClaim = await createShaClaim(
+        claimInput(fixture, setup, {
+          lines: [{ shaServiceCode: "PART", description: "Part-covered procedure", amount: "1000.00" }],
+        }),
+        { database: ctx.db },
+      );
+      const partItem = and(
+        eq(benefitPackageItems.facilityId, fixture.facility.id),
+        eq(benefitPackageItems.shaServiceCode, "PART"),
+      );
+      await ctx.db.update(benefitPackageItems).set({ coPayPercent: "50.00" }).where(partItem);
+      await expect(submit(stalePackageClaim.claimId)).rejects.toThrow(
+        /no longer matches the active benefit package/,
+      );
+      await ctx.db.update(benefitPackageItems).set({ coPayPercent: "20.00" }).where(partItem);
+
+      // A tampered per-line snapshot is rejected on the same guard.
+      const staleLineClaim = await createShaClaim(claimInput(fixture, setup), { database: ctx.db });
+      await ctx.db
+        .update(claimLines)
+        .set({ shaBilledAmount: "999.00" })
+        .where(
+          and(
+            eq(claimLines.facilityId, fixture.facility.id),
+            eq(claimLines.claimId, staleLineClaim.claimId),
+          ),
+        );
+      await expect(submit(staleLineClaim.claimId)).rejects.toThrow(
+        /no longer matches the active benefit package/,
+      );
+
+      // Claim-level totals are re-derived from the snapshot and must reconcile.
+      const staleTotalClaim = await createShaClaim(claimInput(fixture, setup), { database: ctx.db });
+      await ctx.db
+        .update(claims)
+        .set({ billedAmount: "999.00" })
+        .where(and(eq(claims.facilityId, fixture.facility.id), eq(claims.id, staleTotalClaim.claimId)));
+      await expect(submit(staleTotalClaim.claimId)).rejects.toThrow(/claim totals no longer match/);
+    });
+  });
+
+  it("H1: adjudication allocates only over SHA-billed, non-patient-pay lines", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const claim = await createSubmittedClaim(fixture, setup, {
+        lines: [
+          { shaServiceCode: "CONS", description: "Consultation", amount: "1000.00" },
+          { shaServiceCode: "PART", description: "Part-covered procedure", amount: "1000.00" },
+          {
+            shaServiceCode: "EXCL",
+            description: "Cosmetic service",
+            amount: "500.00",
+            patientPay: true,
+          },
+        ],
+      });
+
+      const adjudication = await approveClaim(fixture, claim.claimId, "900.00");
+      expect(adjudication.status).toBe("accepted");
+
+      const detail = await getShaClaim(ctx.db, fixture.facility.id, claim.claimId);
+      const approvedFor = (code: string) =>
+        toCents(detail!.lines.find((line) => line.shaServiceCode === code)!.approvedAmount);
+
+      // Billable SHA amounts are 1000 and 800; 900 is split 500/400 pro rata.
+      expect(approvedFor("CONS")).toBe(50000);
+      expect(approvedFor("PART")).toBe(40000);
+      expect(approvedFor("EXCL")).toBe(0);
+      expect(detail!.lines.reduce((sum, line) => sum + toCents(line.approvedAmount), 0)).toBe(90000);
+    });
+  });
+
+  it("H1: reworkShaClaim revalidates links, reprices and preserves the SHA reference", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const preauth = await requestShaPreAuthorization(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: PREPARER,
+          payerId: fixture.payerId,
+          patientId: fixture.patientId,
+          empanelmentId: setup.empanelmentId,
+          benefitPackageId: setup.benefitPackageId,
+          fund: "shif",
+          requestedAmount: "5000.00",
+          expiresAt: "2099-12-31",
+        },
+        { database: ctx.db },
+      );
+      await decideShaPreAuthorization(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: APPROVER,
+          preAuthId: preauth.preAuthId,
+          decision: "approved",
+          approvedAmount: "5000.00",
+          expiresAt: "2099-12-31",
+        },
+        { database: ctx.db },
+      );
+
+      const original = await createSubmittedClaim(fixture, setup, {
+        preAuthId: preauth.preAuthId,
+        lines: [
+          { shaServiceCode: "HIGH", description: "Inpatient admission", amount: "5000.00" },
+          { shaServiceCode: "PART", description: "Part-covered procedure", amount: "1000.00" },
+        ],
+      });
+      await recordShaDenial(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SUBMITTER,
+          claimId: original.claimId,
+          code: "REJ",
+          reason: "Tariff has changed",
+        },
+        { database: ctx.db },
+      );
+
+      const originalDetail = await getShaClaim(ctx.db, fixture.facility.id, original.claimId);
+      const reworkBase = {
+        facilityId: fixture.facility.id,
+        actor: PREPARER,
+        claimId: original.claimId,
+      };
+
+      // Links are revalidated, not inherited blindly.
+      await updateEmpanelmentStatus(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SETUP,
+          empanelmentId: setup.empanelmentId,
+          status: "suspended",
+          reason: "Link revalidation test",
+        },
+        { database: ctx.db },
+      );
+      await expect(
+        reworkShaClaim(
+          { ...reworkBase, idempotencyKey: newIdempotencyKey() },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/suspended/);
+      await updateEmpanelmentStatus(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: SETUP,
+          empanelmentId: setup.empanelmentId,
+          status: "active",
+        },
+        { database: ctx.db },
+      );
+
+      await ctx.db
+        .update(preAuthorizations)
+        .set({ expiresAt: "2020-01-01" })
+        .where(eq(preAuthorizations.id, preauth.preAuthId));
+      await expect(
+        reworkShaClaim(
+          { ...reworkBase, idempotencyKey: newIdempotencyKey() },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/pre-authorisation has expired/);
+      await ctx.db
+        .update(preAuthorizations)
+        .set({ expiresAt: "2099-12-31" })
+        .where(eq(preAuthorizations.id, preauth.preAuthId));
+
+      // Current tariff and co-pay are used for the replacement draft.
+      await ctx.db
+        .update(benefitPackageItems)
+        .set({ coPayPercent: "50.00" })
+        .where(
+          and(
+            eq(benefitPackageItems.facilityId, fixture.facility.id),
+            eq(benefitPackageItems.shaServiceCode, "PART"),
+          ),
+        );
+      await ctx.db
+        .update(shaEmpanelments)
+        .set({ tariffVersion: "TARIFF-2027" })
+        .where(eq(shaEmpanelments.id, setup.empanelmentId));
+
+      const rework = await reworkShaClaim(
+        { ...reworkBase, idempotencyKey: newIdempotencyKey(), note: "Repriced on current tariff" },
+        { database: ctx.db },
+      );
+      expect(rework.status).toBe("draft");
+      expect(rework.supersedesClaimId).toBe(original.claimId);
+      expect(rework.shaClaimRef).toBe(originalDetail!.shaClaimRef);
+
+      const fresh = await getShaClaim(ctx.db, fixture.facility.id, rework.claimId);
+      expect(fresh?.tariffVersion).toBe("TARIFF-2027");
+      expect(fresh?.supersedesClaimId).toBe(original.claimId);
+      expect(fresh?.shaClaimRef).toBe(originalDetail!.shaClaimRef);
+      expect(fresh?.billedAmount).toBe("5500.00");
+      expect(fresh?.patientCoPay).toBe("500.00");
+
+      const freshPart = fresh!.lines.find((line) => line.shaServiceCode === "PART")!;
+      const freshHigh = fresh!.lines.find((line) => line.shaServiceCode === "HIGH")!;
+      expect(freshPart.shaBilledAmount).toBe("500.00");
+      expect(freshPart.shaPatientAmount).toBe("500.00");
+      expect(freshPart.shaCoverage).toBe("partial");
+      expect(freshHigh.shaBilledAmount).toBe("5000.00");
+      expect(freshHigh.shaPreauthRequired).toBe(true);
+
+      const originalPart = originalDetail!.lines.find((line) => line.shaServiceCode === "PART")!;
+      expect(originalPart.shaBilledAmount).toBe("800.00");
+      expect(originalPart.shaPatientAmount).toBe("200.00");
+    });
+  });
+
+  it("M1: direct DELETE on protected SHA tables is refused outside the cleanup bypass", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+
+      const expectHardDeleteRefusal = async (promise: Promise<unknown>) => {
+        await expect(promise).rejects.toSatisfy((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          const cause =
+            error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+          return /hard-deleted/i.test(`${message} ${cause}`);
+        });
+      };
+
+      await expectHardDeleteRefusal(
+        ctx.db.delete(shaEmpanelments).where(eq(shaEmpanelments.id, setup.empanelmentId)),
+      );
+      await expectHardDeleteRefusal(
+        ctx.db.delete(benefitPackages).where(eq(benefitPackages.id, setup.benefitPackageId)),
+      );
+
+      // Teardown still works through the same bypass used by cleanupTestFacility.
+      await ctx.db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL varian.ledger_cleanup = 'on'`);
+        await tx
+          .delete(benefitPackageItems)
+          .where(eq(benefitPackageItems.facilityId, fixture.facility.id));
+        const removedPackage = await tx
+          .delete(benefitPackages)
+          .where(eq(benefitPackages.id, setup.benefitPackageId))
+          .returning({ id: benefitPackages.id });
+        const removedEmpanelment = await tx
+          .delete(shaEmpanelments)
+          .where(eq(shaEmpanelments.id, setup.empanelmentId))
+          .returning({ id: shaEmpanelments.id });
+        expect(removedPackage).toHaveLength(1);
+        expect(removedEmpanelment).toHaveLength(1);
+      });
+    });
+  });
+
+  it("M2: SHA API command roles are complete and map to the corrected roles", () => {
+    expect(new Set(SHA_COMMAND_NAMES).size).toBe(SHA_COMMAND_NAMES.length);
+    expect(Object.keys(SHA_COMMAND_ROLES).sort()).toEqual([...SHA_COMMAND_NAMES].sort());
+
+    const rolesFor = (command: (typeof SHA_COMMAND_NAMES)[number]) =>
+      [...SHA_COMMAND_ROLES[command]].sort();
+
+    expect(rolesFor("recordShaCoPay")).toEqual(["admin", "cashier", "super_admin"]);
+    for (const command of [
+      "approveWaiver",
+      "approveExemption",
+      "decideShaPreAuthorization",
+      "recordShaAdjudication",
+    ] as const) {
+      expect(rolesFor(command), `approval: ${command}`).toEqual([
+        "admin",
+        "revenue_cycle_officer",
+        "super_admin",
+      ]);
+    }
+    for (const command of ["recordShaRemittance", "reconcileShaPaymentReport"] as const) {
+      expect(rolesFor(command), `finance: ${command}`).toEqual([
+        "accountant",
+        "admin",
+        "finance_officer",
+        "super_admin",
+      ]);
+    }
+  });
+
+  it("recordShaCoPay requires an eligible SHA check and is idempotent by key", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const ineligible = await verifyShaEligibility(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: CASHIER,
+          patientId: fixture.patientId,
+          payerId: fixture.payerId,
+          empanelmentId: setup.empanelmentId,
+          fund: "shif",
+          eligibility: "ineligible",
+        },
+        { database: ctx.db },
+      );
+
+      const baseInput = {
+        facilityId: fixture.facility.id,
+        actor: CASHIER,
+        patientId: fixture.patientId,
+        encounterId: fixture.encounterId,
+        invoiceId: fixture.invoiceId,
+        empanelmentId: setup.empanelmentId,
+        benefitPackageId: setup.benefitPackageId,
+        payerId: fixture.payerId,
+        fund: "shif" as const,
+        lines: [
+          { shaServiceCode: "PART", description: "Part-covered procedure", amount: "1000.00" },
+          {
+            shaServiceCode: "EXCL",
+            description: "Cosmetic service",
+            amount: "500.00",
+            patientPay: true,
+          },
+        ],
+      };
+
+      await expect(
+        recordShaCoPay(
+          {
+            ...baseInput,
+            idempotencyKey: newIdempotencyKey(),
+            eligibilityCheckId: ineligible.checkId,
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/eligible SHA check/);
+
+      const eligible = await verifyShaEligibility(
+        {
+          facilityId: fixture.facility.id,
+          idempotencyKey: newIdempotencyKey(),
+          actor: CASHIER,
+          patientId: fixture.patientId,
+          payerId: fixture.payerId,
+          empanelmentId: setup.empanelmentId,
+          fund: "shif",
+          eligibility: "eligible",
+        },
+        { database: ctx.db },
+      );
+
+      const input = {
+        ...baseInput,
+        idempotencyKey: newIdempotencyKey(),
+        eligibilityCheckId: eligible.checkId,
+      };
+      const result = await recordShaCoPay(input, { database: ctx.db });
+      expect(result.amount).toBe("700.00");
+      expect(result.lineCount).toBe(2);
+      expect(result.lines.map((line) => line.coverage)).toEqual(["partial", "excluded"]);
+      expect(result.lines.find((line) => line.shaServiceCode === "PART")?.patientCoPay).toBe("200.00");
+      expect(result.lines.find((line) => line.shaServiceCode === "EXCL")?.patientCoPay).toBe("500.00");
+
+      const stored = await ctx.db
+        .select()
+        .from(shaCoPayAssessments)
+        .where(
+          and(
+            eq(shaCoPayAssessments.facilityId, fixture.facility.id),
+            eq(shaCoPayAssessments.id, result.assessmentId),
+          ),
+        );
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.amount).toBe("700.00");
+      expect(stored[0]!.eligibilityCheckId).toBe(eligible.checkId);
+      expect(stored[0]!.recordedBy).toBe(CASHIER.userId);
+      expect(stored[0]!.lines).toEqual(result.lines);
+
+      expect(await recordShaCoPay(input, { database: ctx.db })).toEqual(result);
+      const allAssessments = await ctx.db
+        .select()
+        .from(shaCoPayAssessments)
+        .where(eq(shaCoPayAssessments.facilityId, fixture.facility.id));
+      expect(allAssessments).toHaveLength(1);
+      expect(await auditCount(fixture.facility.id, "sha_co_pay.record")).toBe(1);
+    });
+  });
+
+  it("readiness replay returns the stored result without re-running the guard", async () => {
+    await withShaFacility(async (fixture) => {
+      const setup = await setupEmpanelmentAndPackage(fixture);
+      const input = claimInput(fixture, setup, { idempotencyKey: newIdempotencyKey() });
+      const first = await createShaClaim(input, { database: ctx.db });
+      const blockedBefore = await auditCount(fixture.facility.id, "regulatory.readiness.blocked");
+      const claimsBefore = await ctx.db
+        .select()
+        .from(claims)
+        .where(eq(claims.facilityId, fixture.facility.id));
+
+      await ctx.db
+        .update(facilityRegulatoryProfiles)
+        .set({ shaEmpanelmentStatus: "expired" })
+        .where(eq(facilityRegulatoryProfiles.facilityId, fixture.facility.id));
+
+      // Same key: the command log result is returned before the guard runs again.
+      expect(await createShaClaim(input, { database: ctx.db })).toEqual(first);
+      expect(await auditCount(fixture.facility.id, "regulatory.readiness.blocked")).toBe(blockedBefore);
+      const claimsAfterReplay = await ctx.db
+        .select()
+        .from(claims)
+        .where(eq(claims.facilityId, fixture.facility.id));
+      expect(claimsAfterReplay).toHaveLength(claimsBefore.length);
+
+      // A new key still evaluates the now-unready facility and refuses it.
+      await expect(
+        createShaClaim(
+          claimInput(fixture, setup, { idempotencyKey: newIdempotencyKey() }),
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/not ready for claiming/);
+      expect(await auditCount(fixture.facility.id, "regulatory.readiness.blocked")).toBe(
+        blockedBefore + 1,
+      );
     });
   });
 });

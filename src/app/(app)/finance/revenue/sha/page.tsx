@@ -3,6 +3,7 @@ import { Screen } from "@/components/shell/screen";
 import {
   SHA_APPROVAL_ROLES,
   SHA_CLAIM_ROLES,
+  SHA_CO_PAY_ROLES,
   SHA_ELIGIBILITY_ROLES,
   SHA_FINANCE_ROLES,
   SHA_READ_ROLES,
@@ -25,6 +26,7 @@ export default async function ShaRevenuePage() {
         capabilities={{
           canSetup: has(SHA_SETUP_ROLES),
           canVerifyEligibility: has(SHA_ELIGIBILITY_ROLES),
+          canRecordCoPay: has(SHA_CO_PAY_ROLES),
           canApprove: has(SHA_APPROVAL_ROLES),
           canClaim: has(SHA_CLAIM_ROLES),
           canFinance: has(SHA_FINANCE_ROLES),

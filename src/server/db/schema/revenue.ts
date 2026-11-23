@@ -16,6 +16,7 @@ import { newId } from "../../../lib/uuid";
 
 import { charges, invoices, services } from "./billing";
 import { encounters, patients } from "./patients";
+import { benefitPackages, shaCoPayAssessments, shaEmpanelments, shaWaivers } from "./sha";
 import { auditColumns, facilities } from "./tenancy";
 
 export const payerKindEnum = pgEnum("payer_kind", [
@@ -150,7 +151,9 @@ export const preAuthorizations = pgTable(
     authNo: varchar("auth_no", { length: 40 }).notNull(),
     shaAuthRef: varchar("sha_auth_ref", { length: 64 }),
     fund: varchar("fund", { length: 16 }),
-    benefitPackageId: uuid("benefit_package_id"),
+    benefitPackageId: uuid("benefit_package_id").references(() => benefitPackages.id, {
+      onDelete: "restrict",
+    }),
     shaStatus: varchar("sha_status", { length: 32 }),
     requestedAmount: numeric("requested_amount", { precision: 12, scale: 2 })
       .notNull()
@@ -198,15 +201,25 @@ export const claims = pgTable(
     status: claimStatusEnum("status").notNull().default("draft"),
     shaClaimRef: varchar("sha_claim_ref", { length: 64 }),
     fund: varchar("fund", { length: 16 }),
-    empanelmentId: uuid("empanelment_id"),
-    benefitPackageId: uuid("benefit_package_id"),
+    empanelmentId: uuid("empanelment_id").references(() => shaEmpanelments.id, {
+      onDelete: "restrict",
+    }),
+    benefitPackageId: uuid("benefit_package_id").references(() => benefitPackages.id, {
+      onDelete: "restrict",
+    }),
+    preAuthId: uuid("pre_auth_id").references(() => preAuthorizations.id, {
+      onDelete: "restrict",
+    }),
+    coPayAssessmentId: uuid("co_pay_assessment_id").references(() => shaCoPayAssessments.id, {
+      onDelete: "restrict",
+    }),
     tariffVersion: varchar("tariff_version", { length: 64 }),
     submissionBatch: varchar("submission_batch", { length: 64 }),
     adjudicationStatus: varchar("adjudication_status", { length: 32 }),
     adjudicationCode: varchar("adjudication_code", { length: 32 }),
     billedAmount: numeric("billed_amount", { precision: 12, scale: 2 }).notNull().default("0"),
     patientCoPay: numeric("patient_co_pay", { precision: 12, scale: 2 }).notNull().default("0"),
-    waiverId: uuid("waiver_id"),
+    waiverId: uuid("waiver_id").references(() => shaWaivers.id, { onDelete: "restrict" }),
     supersedesClaimId: uuid("supersedes_claim_id"),
     total: numeric("total", { precision: 12, scale: 2 }).notNull().default("0"),
     approvedAmount: numeric("approved_amount", { precision: 12, scale: 2 })
@@ -253,6 +266,19 @@ export const claimLines = pgTable(
     approvedAmount: numeric("approved_amount", { precision: 12, scale: 2 })
       .notNull()
       .default("0"),
+    /**
+     * SHA pricing snapshot. `shaPatientPay` rows are never billed to SHA or
+     * included in adjudication allocation, even if the package changes later.
+     */
+    shaPatientPay: boolean("sha_patient_pay").notNull().default(false),
+    shaCoverage: varchar("sha_coverage", { length: 16 }),
+    shaBilledAmount: numeric("sha_billed_amount", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    shaPatientAmount: numeric("sha_patient_amount", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
+    shaPreauthRequired: boolean("sha_preauth_required").notNull().default(false),
     denialCode: varchar("denial_code", { length: 32 }),
     denialReason: text("denial_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -2,14 +2,8 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  SHA_APPROVAL_ROLES,
-  SHA_CLAIM_ROLES,
-  SHA_ELIGIBILITY_ROLES,
-  SHA_FINANCE_ROLES,
-  SHA_READ_ROLES,
-  SHA_SETUP_ROLES,
-} from "@/lib/navigation";
+import { SHA_READ_ROLES } from "@/lib/navigation";
+import { SHA_COMMAND_NAMES, SHA_COMMAND_ROLES, type ShaCommandName } from "@/lib/sha-roles";
 import { apiErrorResponse } from "@/server/auth/api-error";
 import { actorFromRequest, requireApiFacility } from "@/server/auth/api-context";
 import { ForbiddenError, UnauthorizedError } from "@/server/auth/guards";
@@ -21,6 +15,7 @@ import {
   createShaClaim,
   decideShaPreAuthorization,
   recordShaAdjudication,
+  recordShaCoPay,
   recordShaDenial,
   recordShaRemittance,
   reconcileShaPaymentReport,
@@ -32,7 +27,6 @@ import {
   verifyShaEligibility,
 } from "@/server/commands/sha";
 import { db } from "@/server/db/client";
-import type { Role } from "@/server/db/schema";
 import { searchPatients } from "@/server/queries/patients";
 import {
   getBenefitPackage,
@@ -43,6 +37,7 @@ import {
   listBenefitPackages,
   listEmpanelments,
   listShaAdjudicationCodes,
+  listShaCoPayAssessments,
   listShaClaims,
   listShaEligibilityChecks,
   listShaPreAuthorizations,
@@ -60,7 +55,7 @@ export const dynamic = "force-dynamic";
 
 type ShaCommand = (input: Record<string, unknown>) => Promise<unknown>;
 
-const commands: Record<string, ShaCommand> = {
+const commands: Record<ShaCommandName, ShaCommand> = {
   createEmpanelment: (input) => createEmpanelment(input as Parameters<typeof createEmpanelment>[0]),
   updateEmpanelmentStatus: (input) =>
     updateEmpanelmentStatus(input as Parameters<typeof updateEmpanelmentStatus>[0]),
@@ -68,6 +63,7 @@ const commands: Record<string, ShaCommand> = {
     createBenefitPackage(input as Parameters<typeof createBenefitPackage>[0]),
   verifyShaEligibility: (input) =>
     verifyShaEligibility(input as Parameters<typeof verifyShaEligibility>[0]),
+  recordShaCoPay: (input) => recordShaCoPay(input as Parameters<typeof recordShaCoPay>[0]),
   requestShaWaiver: (input) => requestShaWaiver(input as Parameters<typeof requestShaWaiver>[0]),
   approveWaiver: (input) => approveWaiver(input as Parameters<typeof approveWaiver>[0]),
   approveExemption: (input) => approveExemption(input as Parameters<typeof approveExemption>[0]),
@@ -87,28 +83,8 @@ const commands: Record<string, ShaCommand> = {
     reconcileShaPaymentReport(input as Parameters<typeof reconcileShaPaymentReport>[0]),
 };
 
-/** Role-based separation of duties on top of each command's actor-based checks. */
-const commandRoles: Record<string, Role[]> = {
-  createEmpanelment: SHA_SETUP_ROLES,
-  updateEmpanelmentStatus: SHA_SETUP_ROLES,
-  createBenefitPackage: SHA_SETUP_ROLES,
-  verifyShaEligibility: SHA_ELIGIBILITY_ROLES,
-  requestShaWaiver: SHA_ELIGIBILITY_ROLES,
-  approveWaiver: SHA_APPROVAL_ROLES,
-  approveExemption: SHA_APPROVAL_ROLES,
-  requestShaPreAuthorization: SHA_CLAIM_ROLES,
-  decideShaPreAuthorization: SHA_APPROVAL_ROLES,
-  createShaClaim: SHA_CLAIM_ROLES,
-  submitShaClaim: SHA_CLAIM_ROLES,
-  recordShaAdjudication: SHA_APPROVAL_ROLES,
-  recordShaDenial: SHA_CLAIM_ROLES,
-  reworkShaClaim: SHA_CLAIM_ROLES,
-  recordShaRemittance: SHA_FINANCE_ROLES,
-  reconcileShaPaymentReport: SHA_FINANCE_ROLES,
-};
-
 const commandRequestSchema = z.object({
-  command: z.string().trim().min(1).max(64),
+  command: z.enum(SHA_COMMAND_NAMES),
   input: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -126,6 +102,7 @@ export async function GET(request: NextRequest) {
       empanelments,
       benefitPackages,
       eligibilityChecks,
+      coPayAssessments,
       preAuthorizations,
       claims,
       claimDetail,
@@ -145,6 +122,7 @@ export async function GET(request: NextRequest) {
       listEmpanelments(db, facilityId),
       listBenefitPackages(db, facilityId),
       listShaEligibilityChecks(db, facilityId),
+      listShaCoPayAssessments(db, facilityId, patientId),
       listShaPreAuthorizations(db, facilityId),
       listShaClaims(db, facilityId),
       claimId ? getShaClaim(db, facilityId, claimId) : Promise.resolve(null),
@@ -166,6 +144,7 @@ export async function GET(request: NextRequest) {
       empanelments,
       benefitPackages,
       eligibilityChecks,
+      coPayAssessments,
       preAuthorizations,
       claims,
       claimDetail,
@@ -197,14 +176,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid SHA command", issues: body.error.issues }, { status: 400 });
     }
 
-    const roles = commandRoles[body.data.command];
-    if (!roles) {
-      return NextResponse.json({ error: "Unknown SHA command" }, { status: 400 });
-    }
-    const run = commands[body.data.command];
-    if (!run) {
-      return NextResponse.json({ error: "Unknown SHA command" }, { status: 400 });
-    }
+    const commandName: ShaCommandName = body.data.command;
+    const roles = SHA_COMMAND_ROLES[commandName];
+    const run = commands[commandName];
 
     const { facilityId, staff } = await requireApiFacility(roles);
     const { facilityId: _facility, actor: _actor, ...cleanInput } = body.data.input;

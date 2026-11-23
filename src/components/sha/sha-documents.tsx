@@ -54,7 +54,9 @@ export function ShaClaimDocument({ claim }: { claim: ShaClaimDetail }) {
         </div>
 
         <div className="mt-4 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <Detail label="Facility" value={claim.empanelment?.schemeCode} />
+          <Detail label="Facility" value={claim.facilityName} />
+          <Detail label="Facility address" value={claim.facilityAddress} />
+          <Detail label="Scheme" value={claim.empanelment?.schemeCode} />
           <Detail label="KMPDC no." value={claim.empanelment?.kmpdcNumber} />
           <Detail label="Contract no." value={claim.empanelment?.contractNo} />
           <Detail label="Tariff version" value={claim.tariffVersion ?? claim.empanelment?.tariffVersion} />
@@ -74,8 +76,9 @@ export function ShaClaimDocument({ claim }: { claim: ShaClaimDetail }) {
               <th scope="col" className="text-left">SHA code</th>
               <th scope="col" className="text-left">Description</th>
               <th scope="col" className="text-right">Qty</th>
-              <th scope="col" className="text-right">Unit price</th>
-              <th scope="col" className="text-right">Billed</th>
+              <th scope="col" className="text-right">Amount</th>
+              <th scope="col" className="text-right">SHA billed</th>
+              <th scope="col" className="text-right">Patient pay</th>
               <th scope="col" className="text-right">Approved</th>
             </tr>
           </thead>
@@ -85,8 +88,9 @@ export function ShaClaimDocument({ claim }: { claim: ShaClaimDetail }) {
                 <td>{line.shaServiceCode ?? "—"}</td>
                 <td>{line.description}</td>
                 <td className="text-right">{line.quantity}</td>
-                <td className="text-right">{formatMoney(line.unitPrice)}</td>
                 <td className="text-right">{formatMoney(line.amount)}</td>
+                <td className="text-right">{formatMoney(line.shaBilledAmount)}</td>
+                <td className="text-right">{formatMoney(line.shaPatientAmount)}</td>
                 <td className="text-right">{formatMoney(line.approvedAmount)}</td>
               </tr>
             ))}
@@ -94,7 +98,8 @@ export function ShaClaimDocument({ claim }: { claim: ShaClaimDetail }) {
           <tfoot>
             <tr>
               <th scope="row" colSpan={4} className="text-right">Totals</th>
-              <td className="text-right font-semibold">{formatMoney(claim.total)}</td>
+              <td className="text-right font-semibold">{formatMoney(claim.billedAmount)}</td>
+              <td className="text-right font-semibold">{formatMoney(claim.patientCoPay)}</td>
               <td className="text-right font-semibold">{formatMoney(claim.approvedAmount)}</td>
             </tr>
           </tfoot>
@@ -138,7 +143,9 @@ export function ShaRemittanceDocument({ claim }: { claim: ShaClaimDetail }) {
         </div>
 
         <div className="mt-4 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <Detail label="Facility" value={claim.empanelment?.schemeCode} />
+          <Detail label="Facility" value={claim.facilityName} />
+          <Detail label="Facility address" value={claim.facilityAddress} />
+          <Detail label="Scheme" value={claim.empanelment?.schemeCode} />
           <Detail label="KMPDC no." value={claim.empanelment?.kmpdcNumber} />
           <Detail label="Patient" value={claim.patientName} />
           <Detail label="MRN" value={claim.mrn} />

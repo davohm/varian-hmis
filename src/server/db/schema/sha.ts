@@ -2,6 +2,7 @@ import {
   boolean,
   date,
   index,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -15,7 +16,7 @@ import {
 import { newId } from "../../../lib/uuid";
 
 import { invoices } from "./billing";
-import { patients } from "./patients";
+import { encounters, patients } from "./patients";
 import { auditColumns, facilities } from "./tenancy";
 
 /** Fund codes published by the Social Health Authority. Admin-managed, never guessed. */
@@ -168,6 +169,56 @@ export const shaEligibilityChecks = pgTable(
   },
   (table) => ({
     patientIdx: index("sha_eligibility_checks_patient_idx").on(table.facilityId, table.patientId),
+  }),
+);
+
+export interface ShaCoPayLine {
+  description: string;
+  shaServiceCode: string | null;
+  coverage: string;
+  billed: string;
+  patientCoPay: string;
+  preauthRequired: boolean;
+}
+
+/** Cashier-authored pre-claim co-pay assessment, append-only like an eligibility check. */
+export const shaCoPayAssessments = pgTable(
+  "sha_co_pay_assessments",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    facilityId: uuid("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "restrict" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    encounterId: uuid("encounter_id")
+      .notNull()
+      .references(() => encounters.id, { onDelete: "restrict" }),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    empanelmentId: uuid("empanelment_id")
+      .notNull()
+      .references(() => shaEmpanelments.id, { onDelete: "restrict" }),
+    benefitPackageId: uuid("benefit_package_id")
+      .notNull()
+      .references(() => benefitPackages.id, { onDelete: "restrict" }),
+    eligibilityCheckId: uuid("eligibility_check_id").references(() => shaEligibilityChecks.id, {
+      onDelete: "restrict",
+    }),
+    payerId: uuid("payer_id"),
+    fund: shaFundEnum("fund").notNull(),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+    lines: jsonb("lines").$type<ShaCoPayLine[]>().notNull().default([]),
+    notes: text("notes"),
+    recordedBy: text("recorded_by").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditColumns,
+  },
+  (table) => ({
+    patientIdx: index("sha_co_pay_assessments_patient_idx").on(table.facilityId, table.patientId),
+    invoiceIdx: index("sha_co_pay_assessments_invoice_idx").on(table.facilityId, table.invoiceId),
   }),
 );
 

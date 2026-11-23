@@ -9,6 +9,7 @@ import {
   claimLines,
   claims,
   encounters,
+  facilities,
   invoices,
   journalEntries,
   payers,
@@ -16,12 +17,14 @@ import {
   preAuthorizations,
   remittances,
   shaAdjudicationCodes,
+  shaCoPayAssessments,
   shaEligibilityChecks,
   shaEmpanelments,
   shaPaymentReconciliation,
   shaReconciliationLines,
   shaWaivers,
 } from "@/server/db/schema";
+import type { ShaCoPayLine } from "@/server/db/schema/sha";
 
 export type ShaDatabase = typeof db;
 
@@ -304,6 +307,57 @@ export async function getPatientBenefitCoverage(
   };
 }
 
+export interface ShaCoPayAssessmentRow {
+  id: string;
+  patientId: string;
+  encounterId: string;
+  invoiceId: string;
+  empanelmentId: string;
+  benefitPackageId: string;
+  eligibilityCheckId: string | null;
+  payerId: string | null;
+  fund: string;
+  amount: string;
+  lines: ShaCoPayLine[];
+  notes: string | null;
+  recordedBy: string;
+  recordedAt: string;
+  createdAt: string;
+}
+
+/** Cashier co-pay assessments retained for the patient before a claim exists. */
+export async function listShaCoPayAssessments(
+  database: ShaDatabase,
+  facilityId: string,
+  patientId?: string,
+): Promise<ShaCoPayAssessmentRow[]> {
+  const conditions: SQL[] = [eq(shaCoPayAssessments.facilityId, facilityId)];
+  if (patientId) conditions.push(eq(shaCoPayAssessments.patientId, patientId));
+  const rows = await database
+    .select()
+    .from(shaCoPayAssessments)
+    .where(and(...conditions))
+    .orderBy(desc(shaCoPayAssessments.recordedAt))
+    .limit(100);
+  return rows.map((row) => ({
+    id: row.id,
+    patientId: row.patientId,
+    encounterId: row.encounterId,
+    invoiceId: row.invoiceId,
+    empanelmentId: row.empanelmentId,
+    benefitPackageId: row.benefitPackageId,
+    eligibilityCheckId: row.eligibilityCheckId,
+    payerId: row.payerId,
+    fund: row.fund,
+    amount: row.amount,
+    lines: row.lines,
+    notes: row.notes,
+    recordedBy: row.recordedBy,
+    recordedAt: row.recordedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
 /* ------------------------------------------------------------------ */
 /* Claims                                                              */
 /* ------------------------------------------------------------------ */
@@ -421,8 +475,12 @@ export interface ShaClaimDetail extends ShaClaimRow {
   tariffVersion: string | null;
   adjudicationStatus: string | null;
   waiverId: string | null;
+  preAuthId: string | null;
+  coPayAssessmentId: string | null;
   approvedAt: string | null;
   submittedBy: string | null;
+  facilityName: string | null;
+  facilityAddress: string | null;
   empanelment: {
     id: string;
     kmpdcNumber: string | null;
@@ -460,6 +518,11 @@ export interface ShaClaimDetail extends ShaClaimRow {
     unitPrice: string;
     amount: string;
     approvedAmount: string;
+    shaPatientPay: boolean;
+    shaCoverage: string | null;
+    shaBilledAmount: string;
+    shaPatientAmount: string;
+    shaPreauthRequired: boolean;
     denialCode: string | null;
     denialReason: string | null;
   }>;
@@ -498,6 +561,8 @@ export async function getShaClaim(
       encounterNo: encounters.encounterNo,
       encounterStartedAt: encounters.startedAt,
       encounterStatus: encounters.status,
+      facilityName: facilities.name,
+      facilityAddress: facilities.physicalAddress,
       invoiceNo: invoices.invoiceNo,
       invoiceTotal: invoices.total,
       invoiceStatus: invoices.status,
@@ -509,6 +574,7 @@ export async function getShaClaim(
     .innerJoin(payers, eq(claims.payerId, payers.id))
     .innerJoin(patients, eq(claims.patientId, patients.id))
     .innerJoin(encounters, eq(claims.encounterId, encounters.id))
+    .innerJoin(facilities, eq(claims.facilityId, facilities.id))
     .leftJoin(invoices, eq(claims.invoiceId, invoices.id))
     .where(and(eq(claims.facilityId, facilityId), eq(claims.id, claimId)))
     .limit(1);
@@ -551,11 +617,13 @@ export async function getShaClaim(
       })
       .from(preAuthorizations)
       .where(
-        and(
-          eq(preAuthorizations.facilityId, facilityId),
-          eq(preAuthorizations.patientId, claim.patientId),
-          eq(preAuthorizations.fund, claim.fund ?? ""),
-        ),
+        claim.preAuthId
+          ? eq(preAuthorizations.id, claim.preAuthId)
+          : and(
+              eq(preAuthorizations.facilityId, facilityId),
+              eq(preAuthorizations.patientId, claim.patientId),
+              eq(preAuthorizations.fund, claim.fund ?? ""),
+            ),
       )
       .orderBy(desc(preAuthorizations.createdAt))
       .limit(1),
@@ -609,8 +677,12 @@ export async function getShaClaim(
     tariffVersion: claim.tariffVersion,
     adjudicationStatus: claim.adjudicationStatus,
     waiverId: claim.waiverId,
+    preAuthId: claim.preAuthId,
+    coPayAssessmentId: claim.coPayAssessmentId,
     approvedAt: iso(claim.approvedAt),
     submittedBy: claim.submittedBy,
+    facilityName: row.facilityName,
+    facilityAddress: row.facilityAddress,
     empanelment: empanelment[0] ?? null,
     benefitPackage: benefitPackage[0] ?? null,
     invoice: claim.invoiceId
@@ -645,6 +717,11 @@ export async function getShaClaim(
       unitPrice: line.unitPrice,
       amount: line.amount,
       approvedAmount: line.approvedAmount,
+      shaPatientPay: line.shaPatientPay,
+      shaCoverage: line.shaCoverage,
+      shaBilledAmount: line.shaBilledAmount,
+      shaPatientAmount: line.shaPatientAmount,
+      shaPreauthRequired: line.shaPreauthRequired,
       denialCode: line.denialCode,
       denialReason: line.denialReason,
     })),

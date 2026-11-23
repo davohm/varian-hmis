@@ -100,6 +100,33 @@ export interface PatientBenefitCoverage {
   packages: BenefitPackageRow[];
 }
 
+export interface ShaCoPayLine {
+  description: string;
+  shaServiceCode: string | null;
+  coverage: string;
+  billed: string;
+  patientCoPay: string;
+  preauthRequired: boolean;
+}
+
+export interface ShaCoPayAssessmentRow {
+  id: string;
+  patientId: string;
+  encounterId: string;
+  invoiceId: string;
+  empanelmentId: string;
+  benefitPackageId: string;
+  eligibilityCheckId: string | null;
+  payerId: string | null;
+  fund: string;
+  amount: string;
+  lines: ShaCoPayLine[];
+  notes: string | null;
+  recordedBy: string;
+  recordedAt: string;
+  createdAt: string;
+}
+
 export interface ShaClaimRow {
   id: string;
   claimNo: string;
@@ -135,8 +162,12 @@ export interface ShaClaimDetail extends ShaClaimRow {
   tariffVersion: string | null;
   adjudicationStatus: string | null;
   waiverId: string | null;
+  preAuthId: string | null;
+  coPayAssessmentId: string | null;
   approvedAt: string | null;
   submittedBy: string | null;
+  facilityName: string | null;
+  facilityAddress: string | null;
   empanelment: {
     id: string;
     kmpdcNumber: string | null;
@@ -169,6 +200,11 @@ export interface ShaClaimDetail extends ShaClaimRow {
     unitPrice: string;
     amount: string;
     approvedAmount: string;
+    shaPatientPay: boolean;
+    shaCoverage: string | null;
+    shaBilledAmount: string;
+    shaPatientAmount: string;
+    shaPreauthRequired: boolean;
     denialCode: string | null;
     denialReason: string | null;
   }>;
@@ -286,6 +322,7 @@ export interface ShaData {
   empanelments: ShaEmpanelmentRow[];
   benefitPackages: BenefitPackageRow[];
   eligibilityChecks: EligibilityCheckRow[];
+  coPayAssessments: ShaCoPayAssessmentRow[];
   preAuthorizations: ShaPreAuthRow[];
   claims: ShaClaimRow[];
   claimDetail: ShaClaimDetail | null;
@@ -306,6 +343,7 @@ export interface ShaData {
 export interface ShaCapabilities {
   canSetup: boolean;
   canVerifyEligibility: boolean;
+  canRecordCoPay: boolean;
   canApprove: boolean;
   canClaim: boolean;
   canFinance: boolean;

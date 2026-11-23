@@ -196,14 +196,13 @@ export const SHA_ELIGIBILITY_ROLES: Role[] = [
   "super_admin",
 ];
 
-export const SHA_APPROVAL_ROLES: Role[] = [
-  "accountant",
-  "finance_officer",
-  "admin",
-  "super_admin",
-];
+/** Prompt 22 approvals belong to the revenue owner; finance roles only handle cash. */
+export const SHA_APPROVAL_ROLES: Role[] = ["revenue_cycle_officer", "admin", "super_admin"];
 
 export const SHA_CLAIM_ROLES: Role[] = ["revenue_cycle_officer", "admin", "super_admin"];
+
+/** Cashier verifies eligibility and records the patient co-pay before a claim exists. */
+export const SHA_CO_PAY_ROLES: Role[] = ["cashier", "admin", "super_admin"];
 
 export const SHA_FINANCE_ROLES: Role[] = [
   "accountant",
@@ -216,6 +215,7 @@ export const SHA_WRITE_ROLES: Role[] = Array.from(
   new Set<Role>([
     ...SHA_SETUP_ROLES,
     ...SHA_ELIGIBILITY_ROLES,
+    ...SHA_CO_PAY_ROLES,
     ...SHA_APPROVAL_ROLES,
     ...SHA_CLAIM_ROLES,
     ...SHA_FINANCE_ROLES,

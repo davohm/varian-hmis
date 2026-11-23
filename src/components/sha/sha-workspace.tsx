@@ -54,6 +54,7 @@ const EMPTY_DATA: ShaData = {
   empanelments: [],
   benefitPackages: [],
   eligibilityChecks: [],
+  coPayAssessments: [],
   preAuthorizations: [],
   claims: [],
   claimDetail: null,
@@ -739,13 +740,47 @@ function EligibilityPanel(props: PanelProps) {
     notes: "",
   });
   const [waiver, setWaiver] = useState({ kind: "waiver", claimId: "", amount: "", reason: "" });
+  const [coPayForm, setCoPayForm] = useState({
+    patientId: selectedPatientId,
+    encounterId: "",
+    empanelmentId: "",
+    benefitPackageId: "",
+    eligibilityCheckId: "",
+    payerId: "",
+    fund: "shif",
+    notes: "",
+    lines: [{ shaServiceCode: "", description: "", amount: "", quantity: "1", patientPay: false }] as ClaimLineDraft[],
+  });
 
   useEffect(() => {
     setForm((current) => ({ ...current, patientId: selectedPatientId }));
+    setCoPayForm((current) => ({
+      ...current,
+      patientId: selectedPatientId,
+      encounterId: "",
+      eligibilityCheckId: "",
+    }));
   }, [selectedPatientId]);
 
   const coverage = data.coverage;
   const activePackage = coverage?.packages[0];
+  const coPayPackageItems =
+    data.benefitPackages.find((row) => row.id === coPayForm.benefitPackageId)?.items ?? [];
+  const coPayEncounters = data.encounters.filter(
+    (row) => row.patientId === coPayForm.patientId && row.invoiceId,
+  );
+  const coPayChecks = data.eligibilityChecks.filter(
+    (row) => row.patientId === coPayForm.patientId && row.eligibility === "eligible",
+  );
+  const coPayPreviews = coPayForm.lines.map((line) => previewCoverage(line, coPayPackageItems));
+  const coPayTotal = coPayForm.lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const coPayPatientTotal = coPayPreviews.reduce((sum, line) => sum + Number(line.patientCoPay), 0);
+  const updateCoPayLine = (index: number, patch: Partial<ClaimLineDraft>) => {
+    setCoPayForm((current) => ({
+      ...current,
+      lines: current.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
+    }));
+  };
 
   return (
     <div className="space-y-4">
@@ -947,6 +982,379 @@ function EligibilityPanel(props: PanelProps) {
               )}
             </tbody>
           </table>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Cashier co-pay assessment"
+        description="The cashier records the patient responsibility against the selected invoice before the claim is built."
+        testId="sha-co-pay-panel"
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <Pill value={coverage?.eligibility?.eligibility ?? "unknown"} />
+          <span>
+            {coPayChecks.length > 0
+              ? `${coPayChecks.length} eligible SHA check(s) available`
+              : "Verify SHA eligibility before assessing a co-pay"}
+          </span>
+        </div>
+
+        {capabilities.canRecordCoPay ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(
+                "recordShaCoPay",
+                {
+                  patientId: coPayForm.patientId,
+                  encounterId: coPayForm.encounterId,
+                  invoiceId: coPayEncounters.find((row) => row.id === coPayForm.encounterId)?.invoiceId,
+                  empanelmentId: coPayForm.empanelmentId,
+                  benefitPackageId: coPayForm.benefitPackageId,
+                  eligibilityCheckId: coPayForm.eligibilityCheckId || null,
+                  payerId: coPayForm.payerId || null,
+                  fund: coPayForm.fund,
+                  notes: coPayForm.notes || null,
+                  lines: coPayForm.lines.map((line) => ({
+                    shaServiceCode: line.shaServiceCode || null,
+                    description: line.description,
+                    amount: line.amount,
+                    quantity: Number(line.quantity),
+                    patientPay: line.patientPay,
+                  })),
+                  idempotencyKey: newKey(),
+                },
+                "SHA co-pay assessment recorded",
+              );
+            }}
+            data-testid="sha-co-pay-form"
+          >
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Patient">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.patientId}
+                  onChange={(event) => {
+                    setCoPayForm({
+                      ...coPayForm,
+                      patientId: event.target.value,
+                      encounterId: "",
+                      eligibilityCheckId: "",
+                    });
+                    selectPatient(event.target.value);
+                  }}
+                  required
+                >
+                  <option value="">Select patient</option>
+                  {data.patients.map((patient) => (
+                    <option key={patient.id} value={patient.id}>
+                      {patient.mrn} · {patient.firstName} {patient.lastName}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Encounter / invoice">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.encounterId}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, encounterId: event.target.value })}
+                  required
+                >
+                  <option value="">Select encounter</option>
+                  {coPayEncounters.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.encounterNo} · {row.invoiceNo} · {formatMoney(row.invoiceTotal ?? "0")}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Fund">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.fund}
+                  onChange={(event) =>
+                    setCoPayForm({
+                      ...coPayForm,
+                      fund: event.target.value,
+                      empanelmentId: "",
+                      benefitPackageId: "",
+                    })
+                  }
+                >
+                  {["phf", "shif", "eccif"].map((fund) => (
+                    <option key={fund} value={fund}>{fund.toUpperCase()}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Empanelment">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.empanelmentId}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, empanelmentId: event.target.value })}
+                  required
+                >
+                  <option value="">Select empanelment</option>
+                  {data.empanelments
+                    .filter((row) => row.fund === coPayForm.fund && row.contractStatus === "active")
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>{row.schemeCode} · {row.contractNo ?? "no contract"}</option>
+                    ))}
+                </select>
+              </Field>
+              <Field label="Benefit package">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.benefitPackageId}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, benefitPackageId: event.target.value })}
+                  required
+                >
+                  <option value="">Select package</option>
+                  {data.benefitPackages
+                    .filter((row) => row.fund === coPayForm.fund && row.active)
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>{row.packageCode} · {row.name}</option>
+                    ))}
+                </select>
+              </Field>
+              <Field label="Eligibility check" hint="Blank uses the latest eligible check">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.eligibilityCheckId}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, eligibilityCheckId: event.target.value })}
+                >
+                  <option value="">Latest eligible check</option>
+                  {coPayChecks.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {formatDate(row.checkedAt)} · {row.checkRef ?? row.memberRef ?? row.id.slice(0, 8)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Payer" hint="Optional">
+                <select
+                  className={INPUT_CLASS}
+                  value={coPayForm.payerId}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, payerId: event.target.value })}
+                >
+                  <option value="">Not linked</option>
+                  {data.payers.map((payer) => (
+                    <option key={payer.id} value={payer.id}>{payer.name}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Notes" hint="Optional">
+                <input
+                  className={INPUT_CLASS}
+                  value={coPayForm.notes}
+                  onChange={(event) => setCoPayForm({ ...coPayForm, notes: event.target.value })}
+                />
+              </Field>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold">Assessment lines</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Patient-pay lines are excluded from the SHA billed amount even when the tariff code is covered.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className={SMALL_BUTTON_CLASS}
+                  onClick={() =>
+                    setCoPayForm((current) => ({
+                      ...current,
+                      lines: [
+                        ...current.lines,
+                        { shaServiceCode: "", description: "", amount: "", quantity: "1", patientPay: false },
+                      ],
+                    }))
+                  }
+                >
+                  Add line
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className={TABLE_CLASS}>
+                  <caption className="sr-only">Cashier co-pay assessment lines</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" className={TH_CLASS}>SHA code</th>
+                      <th scope="col" className={TH_CLASS}>Description</th>
+                      <th scope="col" className={TH_CLASS}>Amount</th>
+                      <th scope="col" className={TH_CLASS}>Qty</th>
+                      <th scope="col" className={TH_CLASS}>Patient pay</th>
+                      <th scope="col" className={TH_CLASS}>Coverage</th>
+                      <th scope="col" className={TH_CLASS}>SHA billed</th>
+                      <th scope="col" className={TH_CLASS}>Co-pay</th>
+                      <th scope="col" className={TH_CLASS}>Pre-auth</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coPayForm.lines.map((line, index) => {
+                      const preview = coPayPreviews[index];
+                      return (
+                        <tr key={index}>
+                          <td className={TD_CLASS}>
+                            <select
+                              aria-label={`Co-pay SHA code for line ${index + 1}`}
+                              className={`${INPUT_CLASS} h-8 w-36 px-2 text-xs`}
+                              value={line.shaServiceCode}
+                              onChange={(event) => {
+                                const item = coPayPackageItems.find(
+                                  (candidate) => candidate.shaServiceCode === event.target.value,
+                                );
+                                updateCoPayLine(index, {
+                                  shaServiceCode: event.target.value,
+                                  description: item?.description ?? line.description,
+                                  amount: item ? item.unitPrice : line.amount,
+                                });
+                              }}
+                              required
+                            >
+                              <option value="">Select code</option>
+                              {coPayPackageItems.map((item) => (
+                                <option key={item.id} value={item.shaServiceCode ?? ""}>
+                                  {item.shaServiceCode} · {item.description}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className={TD_CLASS}>
+                            <input
+                              aria-label={`Co-pay description for line ${index + 1}`}
+                              className={`${INPUT_CLASS} h-8 w-48 px-2 text-xs`}
+                              value={line.description}
+                              onChange={(event) => updateCoPayLine(index, { description: event.target.value })}
+                              required
+                            />
+                          </td>
+                          <td className={TD_CLASS}>
+                            <input
+                              aria-label={`Co-pay amount for line ${index + 1}`}
+                              className={`${INPUT_CLASS} h-8 w-24 px-2 text-right text-xs`}
+                              inputMode="decimal"
+                              value={line.amount}
+                              onChange={(event) => updateCoPayLine(index, { amount: event.target.value })}
+                              required
+                            />
+                          </td>
+                          <td className={TD_CLASS}>
+                            <input
+                              aria-label={`Co-pay quantity for line ${index + 1}`}
+                              className={`${INPUT_CLASS} h-8 w-16 px-2 text-right text-xs`}
+                              inputMode="decimal"
+                              value={line.quantity}
+                              onChange={(event) => updateCoPayLine(index, { quantity: event.target.value })}
+                            />
+                          </td>
+                          <td className={TD_CLASS}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Co-pay patient pay for line ${index + 1}`}
+                              checked={line.patientPay}
+                              onChange={(event) => updateCoPayLine(index, { patientPay: event.target.checked })}
+                            />
+                          </td>
+                          <td className={TD_CLASS}><Pill value={preview.coverage} /></td>
+                          <td className={`${TD_CLASS} text-right`}>{formatMoney(preview.billed)}</td>
+                          <td className={`${TD_CLASS} text-right`}>{formatMoney(preview.patientCoPay)}</td>
+                          <td className={TD_CLASS}>{preview.preauthRequired ? "Required" : "No"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                <span>
+                  Line total <span className="font-mono font-semibold">{formatMoney(coPayTotal.toFixed(2))}</span>
+                </span>
+                <span>
+                  Patient co-pay <span className="font-mono font-semibold">{formatMoney(coPayPatientTotal.toFixed(2))}</span>
+                </span>
+                {coPayForm.lines.length > 1 ? (
+                  <button
+                    type="button"
+                    className={SMALL_BUTTON_CLASS}
+                    onClick={() =>
+                      setCoPayForm((current) => ({ ...current, lines: current.lines.slice(0, -1) }))
+                    }
+                  >
+                    Remove last line
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className={PRIMARY_BUTTON_CLASS}
+              disabled={
+                !coPayForm.patientId ||
+                !coPayForm.encounterId ||
+                !coPayForm.empanelmentId ||
+                !coPayForm.benefitPackageId ||
+                (coPayChecks.length === 0 && !coPayForm.eligibilityCheckId)
+              }
+            >
+              Record co-pay assessment
+            </button>
+          </form>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Cashiers record the patient co-pay here. Revenue staff can select an assessment when building the claim.
+          </p>
+        )}
+
+        <div className="mt-5">
+          <SubHeading title="Co-pay history" description="Assessments are append-only and stay linked to the invoice." />
+          <div className="mt-3 overflow-x-auto">
+            <table className={TABLE_CLASS}>
+              <caption className="sr-only">SHA co-pay assessments</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className={TH_CLASS}>When</th>
+                  <th scope="col" className={TH_CLASS}>Patient</th>
+                  <th scope="col" className={TH_CLASS}>Encounter</th>
+                  <th scope="col" className={TH_CLASS}>Package</th>
+                  <th scope="col" className={TH_CLASS}>Lines</th>
+                  <th scope="col" className={TH_CLASS}>Co-pay</th>
+                  <th scope="col" className={TH_CLASS}>Recorded by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.coPayAssessments.length === 0 ? (
+                  <EmptyRow colSpan={7} message="No SHA co-pay assessments recorded." />
+                ) : (
+                  data.coPayAssessments.map((assessment) => {
+                    const patient = data.patients.find((row) => row.id === assessment.patientId);
+                    const encounter = data.encounters.find((row) => row.id === assessment.encounterId);
+                    const packageRow = data.benefitPackages.find((row) => row.id === assessment.benefitPackageId);
+                    return (
+                      <tr key={assessment.id}>
+                        <td className={`${TD_CLASS} text-xs`}>{formatDate(assessment.recordedAt)}</td>
+                        <td className={TD_CLASS}>
+                          {patient
+                            ? `${patient.lastName}, ${patient.firstName} · ${patient.mrn}`
+                            : assessment.patientId.slice(0, 8)}
+                        </td>
+                        <td className={TD_CLASS}>{encounter?.encounterNo ?? assessment.encounterId.slice(0, 8)}</td>
+                        <td className={TD_CLASS}>{packageRow?.packageCode ?? assessment.fund.toUpperCase()}</td>
+                        <td className={`${TD_CLASS} text-xs`}>
+                          {assessment.lines.map((line) => line.description).join(", ") || "—"}
+                        </td>
+                        <td className={`${TD_CLASS} text-right font-mono`}>{formatMoney(assessment.amount)}</td>
+                        <td className={`${TD_CLASS} font-mono text-xs`}>{assessment.recordedBy.slice(0, 8)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </Panel>
 
@@ -1346,8 +1754,19 @@ function previewCoverage(
 ): { coverage: string; billed: string; patientCoPay: string; preauthRequired: boolean } {
   const item =
     items.find((candidate) => candidate.shaServiceCode && candidate.shaServiceCode === line.shaServiceCode) ?? null;
-  const coverage = item?.coverage ?? (line.patientPay ? "excluded" : "unlisted");
   const amount = Number(line.amount || 0);
+
+  // An explicit patient-pay flag always wins, even when the tariff code is covered.
+  if (line.patientPay) {
+    return {
+      coverage: "excluded",
+      billed: "0.00",
+      patientCoPay: amount.toFixed(2),
+      preauthRequired: false,
+    };
+  }
+
+  const coverage = item?.coverage ?? "unlisted";
   const coPayPercent = item ? Number(item.coPayPercent) : 0;
   const coPay =
     coverage === "partial"
@@ -1476,6 +1895,7 @@ function ClaimsPanel(props: PanelProps) {
     benefitPackageId: "",
     fund: "shif",
     preAuthId: "",
+    coPayAssessmentId: "",
     notes: "",
   });
   const [lines, setLines] = useState<ClaimLineDraft[]>([
@@ -1576,6 +1996,7 @@ function ClaimsPanel(props: PanelProps) {
                   benefitPackageId: form.benefitPackageId,
                   fund: form.fund,
                   preAuthId: form.preAuthId || null,
+                  coPayAssessmentId: form.coPayAssessmentId || null,
                   notes: form.notes || null,
                   lines: lines.map((line) => ({
                     shaServiceCode: line.shaServiceCode || null,
@@ -1685,6 +2106,22 @@ function ClaimsPanel(props: PanelProps) {
                   {data.preAuthorizations.filter((row) => row.status === "approved" && row.patientId === form.patientId).map((row) => (
                     <option key={row.id} value={row.id}>{row.shaAuthRef ?? row.authNo}</option>
                   ))}
+                </select>
+              </Field>
+              <Field label="Co-pay assessment" hint="Optional; must belong to this patient and package">
+                <select
+                  className={INPUT_CLASS}
+                  value={form.coPayAssessmentId}
+                  onChange={(event) => setForm({ ...form, coPayAssessmentId: event.target.value })}
+                >
+                  <option value="">None</option>
+                  {data.coPayAssessments
+                    .filter((row) => row.patientId === form.patientId && row.benefitPackageId === form.benefitPackageId)
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {formatDate(row.recordedAt)} · {formatMoney(row.amount)}
+                      </option>
+                    ))}
                 </select>
               </Field>
               <Field label="Notes">
@@ -1879,9 +2316,45 @@ function ClaimsPanel(props: PanelProps) {
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="SHA reference"><input className={INPUT_CLASS} value={claim.shaClaimRef ?? "Pending"} readOnly /></Field>
-            <Field label="Billed"><input className={INPUT_CLASS} value={formatMoney(claim.billedAmount)} readOnly /></Field>
+            <Field label="SHA billed"><input className={INPUT_CLASS} value={formatMoney(claim.billedAmount)} readOnly /></Field>
+            <Field label="Patient co-pay"><input className={INPUT_CLASS} value={formatMoney(claim.patientCoPay)} readOnly /></Field>
             <Field label="Approved"><input className={INPUT_CLASS} value={formatMoney(claim.approvedAmount)} readOnly /></Field>
             <Field label="Outstanding"><input className={INPUT_CLASS} value={formatMoney(claim.outstanding)} readOnly /></Field>
+            <Field label="Pre-authorisation"><input className={INPUT_CLASS} value={claim.preAuthId ? "Linked" : "None"} readOnly /></Field>
+            <Field label="Co-pay assessment"><input className={INPUT_CLASS} value={claim.coPayAssessmentId ? "Linked" : "None"} readOnly /></Field>
+            <Field label="Tariff version"><input className={INPUT_CLASS} value={claim.tariffVersion ?? "—"} readOnly /></Field>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className={TABLE_CLASS}>
+              <caption className="sr-only">Stored SHA line coverage snapshot</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className={TH_CLASS}>SHA code</th>
+                  <th scope="col" className={TH_CLASS}>Description</th>
+                  <th scope="col" className={TH_CLASS}>Coverage</th>
+                  <th scope="col" className={TH_CLASS}>Amount</th>
+                  <th scope="col" className={TH_CLASS}>SHA billed</th>
+                  <th scope="col" className={TH_CLASS}>Patient pay</th>
+                  <th scope="col" className={TH_CLASS}>Pre-auth</th>
+                  <th scope="col" className={TH_CLASS}>Approved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {claim.lines.map((line) => (
+                  <tr key={line.id}>
+                    <td className={`${TD_CLASS} font-mono text-xs`}>{line.shaServiceCode ?? "—"}</td>
+                    <td className={TD_CLASS}>{line.description}</td>
+                    <td className={TD_CLASS}><Pill value={line.shaCoverage ?? "unpriced"} /></td>
+                    <td className={`${TD_CLASS} text-right`}>{formatMoney(line.amount)}</td>
+                    <td className={`${TD_CLASS} text-right`}>{formatMoney(line.shaBilledAmount)}</td>
+                    <td className={`${TD_CLASS} text-right`}>{formatMoney(line.shaPatientAmount)}</td>
+                    <td className={TD_CLASS}>{line.shaPreauthRequired ? "Required" : "No"}</td>
+                    <td className={`${TD_CLASS} text-right`}>{formatMoney(line.approvedAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           <div className="mt-4 space-y-3">

@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { fromCents, toCents } from "@/lib/billing";
@@ -22,13 +22,14 @@ import {
   preAuthorizations,
   remittances,
   shaAdjudicationCodes,
+  shaCoPayAssessments,
   shaEligibilityChecks,
   shaEmpanelments,
   shaPaymentReconciliation,
   shaReconciliationLines,
   shaWaivers,
 } from "@/server/db/schema";
-import { db } from "@/server/db/client";
+import { db, type AppDatabase } from "@/server/db/client";
 import { publishEvent } from "@/server/events";
 import { tryPostJournal } from "@/server/ledger";
 import { nextFormattedNumber } from "@/server/numbering";
@@ -46,6 +47,7 @@ import { actorSchema, runCommand, type CommandOptions, type CommandTransaction }
  * recorded on the default connection to leave a durable audit trail.
  */
 async function auditExcessRemittanceRefusal(
+  database: AppDatabase,
   values: {
     facilityId: string;
     actor: { userId?: string | null; ip?: string | null; deviceId?: string | null };
@@ -54,7 +56,7 @@ async function auditExcessRemittanceRefusal(
   claim: { id: string; claimNo: string },
   details: Record<string, unknown>,
 ) {
-  await recordAudit(db, {
+  await recordAudit(database, {
     facilityId: values.facilityId,
     userId,
     action: "sha_remittance.excess_refused",
@@ -80,6 +82,19 @@ const money = z
   .transform((value) => fromCents(toCents(value)));
 const positiveMoney = money.refine((value) => toCents(value) > 0, {
   message: "The amount must be greater than zero",
+});
+
+const shaClaimLineSchema = z.object({
+  chargeId: z.uuid().nullable().optional(),
+  serviceId: z.uuid().nullable().optional(),
+  itemId: z.uuid().nullable().optional(),
+  shaServiceCode: z.string().trim().max(64).nullable().optional(),
+  description: z.string().trim().min(1).max(500),
+  amount: positiveMoney,
+  unitPrice: money.nullable().optional(),
+  quantity: z.number().positive().max(10000).default(1),
+  /** Explicit patient-pay line: excluded benefits are never billed to SHA. */
+  patientPay: z.boolean().default(false),
 });
 
 function actorId(values: { actor: { userId?: string | null } }): string {
@@ -232,6 +247,186 @@ function allocateProRata(approvedCents: number, lines: Array<{ id: string; amoun
     allocated += share;
     return { id: line.id, amount: Math.max(0, share) };
   });
+}
+
+interface ShaLinePricingInput {
+  chargeId?: string | null;
+  serviceId?: string | null;
+  itemId?: string | null;
+  shaServiceCode?: string | null;
+  description: string;
+  amount: string;
+  unitPrice?: string | null;
+  quantity: string;
+  /** Explicit patient-pay lines are never billed to SHA, even when the code is covered. */
+  patientPay: boolean;
+}
+
+interface PricedShaLine extends ShaLinePricingInput {
+  coverage: string;
+  billedCents: number;
+  coPayCents: number;
+  preauthRequired: boolean;
+}
+
+type BenefitItem = typeof benefitPackageItems.$inferSelect;
+type PreAuthorization = typeof preAuthorizations.$inferSelect;
+
+/**
+ * Single pricing engine for claims, co-pay assessments, rework and submission
+ * checks. The result is persisted on each claim line so later package edits
+ * cannot silently change what was submitted to SHA.
+ */
+function priceShaLines(
+  itemRows: BenefitItem[],
+  lines: ShaLinePricingInput[],
+  preauth: PreAuthorization | null,
+): PricedShaLine[] {
+  const prepared = lines.map((line, index) => {
+    const amount = fromCents(toCents(line.amount));
+    const amountCents = toCents(amount);
+    const code = line.shaServiceCode?.trim() || null;
+    const item =
+      itemRows.find(
+        (candidate) =>
+          (code && candidate.shaServiceCode === code) ||
+          (line.serviceId && candidate.serviceId === line.serviceId) ||
+          (line.itemId && candidate.itemId === line.itemId),
+      ) ?? null;
+
+    // An explicit patient-pay decision wins over package coverage.
+    if (line.patientPay) {
+      return {
+        ...line,
+        amount,
+        coverage: "excluded",
+        billedCents: 0,
+        coPayCents: amountCents,
+        preauthRequired: false,
+      };
+    }
+
+    const coverage = item?.coverage ?? "unlisted";
+    if (!item) throw new Error(`Claim line ${index + 1} is not covered by the benefit package`);
+    if (coverage === "excluded" || coverage === "unlisted") {
+      throw new Error(
+        `Claim line ${index + 1} is an excluded benefit; bill it to the patient explicitly`,
+      );
+    }
+
+    const thresholdCents = item.preauthThreshold ? toCents(item.preauthThreshold) : null;
+    const preauthRequired = Boolean(
+      item.requiresPreauth || (thresholdCents != null && amountCents > thresholdCents),
+    );
+    if (preauthRequired && !preauth) {
+      throw new Error(`Claim line ${index + 1} needs a pre-authorisation`);
+    }
+    const coPayPercent = Number(item.coPayPercent);
+    const coPayCents = coverage === "partial" ? Math.round((amountCents * coPayPercent) / 100) : 0;
+    return {
+      ...line,
+      amount,
+      coverage,
+      billedCents: amountCents - coPayCents,
+      coPayCents,
+      preauthRequired,
+    };
+  });
+
+  if (preauth?.approvedAmount) {
+    const preauthLinesCents = prepared
+      .filter((line) => line.preauthRequired)
+      .reduce((sum, line) => sum + toCents(line.amount), 0);
+    if (preauthLinesCents > toCents(preauth.approvedAmount)) {
+      throw new Error("The claim exceeds the approved pre-authorisation amount");
+    }
+  }
+  return prepared;
+}
+
+async function assertActiveBenefitPackage(
+  tx: CommandTransaction,
+  facilityId: string,
+  benefitPackageId: string,
+  fund: string,
+  today = todayIso(),
+) {
+  const [packageRow] = await tx
+    .select()
+    .from(benefitPackages)
+    .where(
+      and(
+        eq(benefitPackages.facilityId, facilityId),
+        eq(benefitPackages.id, benefitPackageId),
+        eq(benefitPackages.fund, fund as "phf"),
+        eq(benefitPackages.active, true),
+      ),
+    )
+    .limit(1);
+  if (!packageRow) throw new Error("Benefit package not found for this fund");
+  if (packageRow.effectiveFrom > today || (packageRow.effectiveTo && packageRow.effectiveTo < today)) {
+    throw new Error("The benefit package is not effective on the claim date");
+  }
+  return packageRow;
+}
+
+async function assertValidClaimPreauth(
+  tx: CommandTransaction,
+  facilityId: string,
+  patientId: string,
+  fund: string,
+  preAuthId: string | null | undefined,
+  today = todayIso(),
+): Promise<PreAuthorization | null> {
+  if (!preAuthId) return null;
+  const [row] = await tx
+    .select()
+    .from(preAuthorizations)
+    .where(
+      and(
+        eq(preAuthorizations.facilityId, facilityId),
+        eq(preAuthorizations.id, preAuthId),
+      ),
+    )
+    .limit(1);
+  if (
+    !row ||
+    row.patientId !== patientId ||
+    row.fund !== fund ||
+    row.status !== "approved"
+  ) {
+    throw new Error("The pre-authorisation is not approved for this patient and fund");
+  }
+  if ((row.expiresAt && row.expiresAt < today) || row.shaStatus === "expired") {
+    throw new Error("The pre-authorisation has expired");
+  }
+  return row;
+}
+
+function persistedLineInput(
+  line: typeof claimLines.$inferSelect,
+  amount = line.amount,
+): ShaLinePricingInput {
+  return {
+    chargeId: line.chargeId,
+    serviceId: line.serviceId,
+    shaServiceCode: line.shaServiceCode,
+    description: line.description,
+    amount,
+    unitPrice: line.unitPrice,
+    quantity: line.quantity,
+    patientPay: line.shaPatientPay,
+  };
+}
+
+function lineSnapshot(line: PricedShaLine) {
+  return {
+    shaPatientPay: line.patientPay,
+    shaCoverage: line.coverage,
+    shaBilledAmount: fromCents(line.billedCents),
+    shaPatientAmount: fromCents(line.coPayCents),
+    shaPreauthRequired: line.preauthRequired,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -656,6 +851,208 @@ export async function verifyShaEligibility(
   );
 }
 
+export const recordShaCoPaySchema = z.object({
+  ...baseSchema,
+  patientId: z.uuid(),
+  encounterId: z.uuid(),
+  invoiceId: z.uuid(),
+  empanelmentId: z.uuid(),
+  benefitPackageId: z.uuid(),
+  eligibilityCheckId: z.uuid().nullable().optional(),
+  payerId: z.uuid().nullable().optional(),
+  fund: z.enum(["phf", "shif", "eccif"]),
+  notes: z.string().trim().max(500).nullable().optional(),
+  lines: z.array(shaClaimLineSchema).min(1).max(100),
+});
+
+export interface ShaCoPayResult {
+  assessmentId: string;
+  amount: string;
+  eligibilityCheckId: string;
+  lineCount: number;
+  lines: Array<{
+    description: string;
+    shaServiceCode: string | null;
+    coverage: string;
+    billed: string;
+    patientCoPay: string;
+    preauthRequired: boolean;
+  }>;
+}
+
+/** Cashier-authored co-pay assessment, retained as evidence before the claim exists. */
+export async function recordShaCoPay(
+  input: z.input<typeof recordShaCoPaySchema>,
+  options: CommandOptions = {},
+): Promise<ShaCoPayResult> {
+  const values = recordShaCoPaySchema.parse(input);
+  const userId = actorId(values);
+
+  return runCommand(
+    { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
+    "recordShaCoPay",
+    async (tx) => {
+      const [patient] = await tx
+        .select({ id: patients.id })
+        .from(patients)
+        .where(and(eq(patients.facilityId, values.facilityId), eq(patients.id, values.patientId)))
+        .limit(1);
+      if (!patient) throw new Error("Patient not found in this facility");
+
+      const [encounter] = await tx
+        .select({ id: encounters.id, patientId: encounters.patientId })
+        .from(encounters)
+        .where(
+          and(eq(encounters.facilityId, values.facilityId), eq(encounters.id, values.encounterId)),
+        )
+        .limit(1);
+      if (!encounter) throw new Error("Encounter not found in this facility");
+      if (encounter.patientId !== values.patientId) {
+        throw new Error("The encounter belongs to a different patient");
+      }
+
+      const [invoice] = await tx
+        .select({ id: invoices.id, encounterId: invoices.encounterId, status: invoices.status })
+        .from(invoices)
+        .where(and(eq(invoices.facilityId, values.facilityId), eq(invoices.id, values.invoiceId)))
+        .limit(1);
+      if (!invoice) throw new Error("Invoice not found in this facility");
+      if (invoice.encounterId !== encounter.id) {
+        throw new Error("The invoice belongs to a different encounter");
+      }
+      if (invoice.status === "void") throw new Error("A void invoice cannot be assessed");
+
+      await assertActiveEmpanelment(
+        tx,
+        values.facilityId,
+        values.empanelmentId,
+        values.fund,
+      );
+      const benefitPackage = await assertActiveBenefitPackage(
+        tx,
+        values.facilityId,
+        values.benefitPackageId,
+        values.fund,
+      );
+
+      let eligibilityCheckId = values.eligibilityCheckId ?? null;
+      if (eligibilityCheckId) {
+        const [check] = await tx
+          .select({ id: shaEligibilityChecks.id, eligibility: shaEligibilityChecks.eligibility })
+          .from(shaEligibilityChecks)
+          .where(
+            and(
+              eq(shaEligibilityChecks.facilityId, values.facilityId),
+              eq(shaEligibilityChecks.id, eligibilityCheckId),
+              eq(shaEligibilityChecks.patientId, values.patientId),
+            ),
+          )
+          .limit(1);
+        if (!check || check.eligibility !== "eligible") {
+          throw new Error("Select an eligible SHA check for this patient before recording a co-pay");
+        }
+      } else {
+        const [check] = await tx
+          .select({ id: shaEligibilityChecks.id })
+          .from(shaEligibilityChecks)
+          .where(
+            and(
+              eq(shaEligibilityChecks.facilityId, values.facilityId),
+              eq(shaEligibilityChecks.patientId, values.patientId),
+              eq(shaEligibilityChecks.eligibility, "eligible"),
+            ),
+          )
+          .orderBy(desc(shaEligibilityChecks.checkedAt))
+          .limit(1);
+        if (!check) throw new Error("Verify SHA eligibility before recording a co-pay");
+        eligibilityCheckId = check.id;
+      }
+
+      const itemRows = await tx
+        .select()
+        .from(benefitPackageItems)
+        .where(
+          and(
+            eq(benefitPackageItems.facilityId, values.facilityId),
+            eq(benefitPackageItems.benefitPackageId, benefitPackage.id),
+          ),
+        );
+      const priced = priceShaLines(
+        itemRows,
+        values.lines.map((line) => ({
+          chargeId: line.chargeId ?? null,
+          serviceId: line.serviceId ?? null,
+          itemId: line.itemId ?? null,
+          shaServiceCode: line.shaServiceCode ?? null,
+          description: line.description,
+          amount: line.amount,
+          unitPrice: line.unitPrice ?? null,
+          quantity: String(line.quantity),
+          patientPay: line.patientPay,
+        })),
+        null,
+      );
+      const patientCents = priced.reduce((sum, line) => sum + line.coPayCents, 0);
+      const amount = fromCents(patientCents);
+      const assessmentId = newId();
+      const assessmentLines = priced.map((line) => ({
+        description: line.description,
+        shaServiceCode: line.shaServiceCode?.trim() || null,
+        coverage: line.coverage,
+        billed: fromCents(line.billedCents),
+        patientCoPay: fromCents(line.coPayCents),
+        preauthRequired: line.preauthRequired,
+      }));
+
+      await tx.insert(shaCoPayAssessments).values({
+        id: assessmentId,
+        facilityId: values.facilityId,
+        patientId: values.patientId,
+        encounterId: encounter.id,
+        invoiceId: invoice.id,
+        empanelmentId: values.empanelmentId,
+        benefitPackageId: benefitPackage.id,
+        eligibilityCheckId,
+        payerId: values.payerId ?? null,
+        fund: values.fund,
+        amount,
+        lines: assessmentLines,
+        notes: values.notes?.trim() || null,
+        recordedBy: userId,
+        createdBy: userId,
+      });
+      await recordAudit(tx, {
+        facilityId: values.facilityId,
+        userId,
+        action: "sha_co_pay.record",
+        module: "revenue",
+        entity: "sha_co_pay_assessments",
+        entityId: assessmentId,
+        details: {
+          patientId: values.patientId,
+          invoiceId: invoice.id,
+          empanelmentId: values.empanelmentId,
+          benefitPackageId: benefitPackage.id,
+          eligibilityCheckId,
+          amount,
+          lineCount: priced.length,
+        },
+        deviceId: values.actor.deviceId,
+        ip: values.actor.ip,
+      });
+
+      return {
+        assessmentId,
+        amount,
+        eligibilityCheckId: eligibilityCheckId!,
+        lineCount: priced.length,
+        lines: assessmentLines,
+      };
+    },
+    options,
+  );
+}
+
 export const requestShaWaiverSchema = z.object({
   ...baseSchema,
   kind: z.enum(["waiver", "exemption"]).default("waiver"),
@@ -971,19 +1368,6 @@ export async function decideShaPreAuthorization(
 /* Claims                                                              */
 /* ------------------------------------------------------------------ */
 
-const shaClaimLineSchema = z.object({
-  chargeId: z.uuid().nullable().optional(),
-  serviceId: z.uuid().nullable().optional(),
-  itemId: z.uuid().nullable().optional(),
-  shaServiceCode: z.string().trim().max(64).nullable().optional(),
-  description: z.string().trim().min(1).max(500),
-  amount: positiveMoney,
-  unitPrice: money.nullable().optional(),
-  quantity: z.number().positive().max(10000).default(1),
-  /** Explicit patient-pay line: excluded benefits are never billed to SHA. */
-  patientPay: z.boolean().default(false),
-});
-
 export const createShaClaimSchema = z.object({
   ...baseSchema,
   payerId: z.uuid(),
@@ -994,6 +1378,7 @@ export const createShaClaimSchema = z.object({
   benefitPackageId: z.uuid(),
   fund: z.enum(["phf", "shif", "eccif"]),
   preAuthId: z.uuid().nullable().optional(),
+  coPayAssessmentId: z.uuid().nullable().optional(),
   sharingAgreementId: z.uuid().nullable().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
   lines: z.array(shaClaimLineSchema).min(1).max(100),
@@ -1017,14 +1402,6 @@ export interface ShaClaimResult {
   }>;
 }
 
-interface PreparedLine {
-  input: z.infer<typeof shaClaimLineSchema>;
-  coverage: string;
-  billedCents: number;
-  coPayCents: number;
-  preauthRequired: boolean;
-}
-
 export async function createShaClaim(
   input: z.input<typeof createShaClaimSchema>,
   options: CommandOptions = {},
@@ -1032,15 +1409,17 @@ export async function createShaClaim(
   const values = createShaClaimSchema.parse(input);
   const userId = actorId(values);
 
-  await assertFacilityReady(
-    { facilityId: values.facilityId, action: "claiming", actor: values.actor },
-    options,
-  );
-
   return runCommand(
     { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
     "createShaClaim",
     async (tx) => {
+      // The guard runs inside the idempotency work callback: a replay returns
+      // the stored result without re-running it, while refusals still audit on
+      // the default connection because the command transaction rolls back.
+      await assertFacilityReady(
+        { facilityId: values.facilityId, action: "claiming", actor: values.actor },
+        options,
+      );
       const today = todayIso();
       const empanelment = await assertActiveEmpanelment(
         tx,
@@ -1050,22 +1429,13 @@ export async function createShaClaim(
         today,
       );
 
-      const [packageRow] = await tx
-        .select()
-        .from(benefitPackages)
-        .where(
-          and(
-            eq(benefitPackages.facilityId, values.facilityId),
-            eq(benefitPackages.id, values.benefitPackageId),
-            eq(benefitPackages.fund, values.fund),
-            eq(benefitPackages.active, true),
-          ),
-        )
-        .limit(1);
-      if (!packageRow) throw new Error("Benefit package not found for this fund");
-      if (packageRow.effectiveFrom > today || (packageRow.effectiveTo && packageRow.effectiveTo < today)) {
-        throw new Error("The benefit package is not effective on the claim date");
-      }
+      const packageRow = await assertActiveBenefitPackage(
+        tx,
+        values.facilityId,
+        values.benefitPackageId,
+        values.fund,
+        today,
+      );
 
       const [payer] = await tx
         .select({ id: payers.id })
@@ -1120,32 +1490,14 @@ export async function createShaClaim(
         sharingAgreementId: values.sharingAgreementId ?? null,
       });
 
-      let preauth: typeof preAuthorizations.$inferSelect | null = null;
-      if (values.preAuthId) {
-        const [row] = await tx
-          .select()
-          .from(preAuthorizations)
-          .where(
-            and(
-              eq(preAuthorizations.facilityId, values.facilityId),
-              eq(preAuthorizations.id, values.preAuthId),
-            ),
-          )
-          .limit(1);
-        if (
-          !row ||
-          row.patientId !== values.patientId ||
-          row.fund !== values.fund ||
-          row.status !== "approved"
-        ) {
-          throw new Error("The pre-authorisation is not approved for this patient and fund");
-        }
-        if (row.expiresAt && row.expiresAt < today) {
-          throw new Error("The pre-authorisation has expired");
-        }
-        if (row.shaStatus === "expired") throw new Error("The pre-authorisation has expired");
-        preauth = row;
-      }
+      const preauth = await assertValidClaimPreauth(
+        tx,
+        values.facilityId,
+        values.patientId,
+        values.fund,
+        values.preAuthId,
+        today,
+      );
 
       const itemRows = await tx
         .select()
@@ -1156,61 +1508,43 @@ export async function createShaClaim(
             eq(benefitPackageItems.benefitPackageId, values.benefitPackageId),
           ),
         );
-      const prepared: PreparedLine[] = values.lines.map((line, index) => {
-        const item =
-          itemRows.find(
-            (candidate) =>
-              (line.shaServiceCode && candidate.shaServiceCode === line.shaServiceCode) ||
-              (line.serviceId && candidate.serviceId === line.serviceId) ||
-              (line.itemId && candidate.itemId === line.itemId),
-          ) ?? null;
-        const amountCents = toCents(line.amount);
-        const coverage = item?.coverage ?? (line.patientPay ? "excluded" : "unlisted");
-        if (!item && !line.patientPay) {
-          throw new Error(`Claim line ${index + 1} is not covered by the benefit package`);
-        }
-        if (coverage === "excluded" || coverage === "unlisted") {
-          if (!line.patientPay) {
-            throw new Error(
-              `Claim line ${index + 1} is an excluded benefit; bill it to the patient explicitly`,
-            );
-          }
-          return {
-            input: line,
-            coverage,
-            billedCents: 0,
-            coPayCents: amountCents,
-            preauthRequired: false,
-          };
-        }
-        const thresholdCents = item?.preauthThreshold ? toCents(item.preauthThreshold) : null;
-        const preauthRequired = Boolean(
-          item?.requiresPreauth || (thresholdCents != null && amountCents > thresholdCents),
-        );
-        if (preauthRequired && !preauth) {
-          throw new Error(`Claim line ${index + 1} needs a pre-authorisation`);
-        }
-        const coPayPercent = item ? Number(item.coPayPercent) : 0;
-        const coPayCents = coverage === "partial" ? Math.round((amountCents * coPayPercent) / 100) : 0;
-        return {
-          input: line,
-          coverage,
-          billedCents: amountCents - coPayCents,
-          coPayCents,
-          preauthRequired,
-        };
-      });
-
-      if (preauth?.approvedAmount) {
-        const preauthLinesCents = prepared
-          .filter((line) => line.preauthRequired)
-          .reduce((sum, line) => sum + toCents(line.input.amount), 0);
-        if (preauthLinesCents > toCents(preauth.approvedAmount)) {
-          throw new Error("The claim exceeds the approved pre-authorisation amount");
+      if (values.coPayAssessmentId) {
+        const [assessment] = await tx
+          .select({ id: shaCoPayAssessments.id })
+          .from(shaCoPayAssessments)
+          .where(
+            and(
+              eq(shaCoPayAssessments.facilityId, values.facilityId),
+              eq(shaCoPayAssessments.id, values.coPayAssessmentId),
+              eq(shaCoPayAssessments.patientId, values.patientId),
+              eq(shaCoPayAssessments.encounterId, values.encounterId),
+              eq(shaCoPayAssessments.invoiceId, values.invoiceId),
+              eq(shaCoPayAssessments.benefitPackageId, values.benefitPackageId),
+            ),
+          )
+          .limit(1);
+        if (!assessment) {
+          throw new Error("The co-pay assessment does not match this patient, encounter and package");
         }
       }
 
-      const totalCents = prepared.reduce((sum, line) => sum + toCents(line.input.amount), 0);
+      const prepared = priceShaLines(
+        itemRows,
+        values.lines.map((line) => ({
+          chargeId: line.chargeId ?? null,
+          serviceId: line.serviceId ?? null,
+          itemId: line.itemId ?? null,
+          shaServiceCode: line.shaServiceCode ?? null,
+          description: line.description,
+          amount: line.amount,
+          unitPrice: line.unitPrice ?? null,
+          quantity: String(line.quantity),
+          patientPay: line.patientPay,
+        })),
+        preauth,
+      );
+
+      const totalCents = prepared.reduce((sum, line) => sum + toCents(line.amount), 0);
       const billedCents = prepared.reduce((sum, line) => sum + line.billedCents, 0);
       const coPayCents = prepared.reduce((sum, line) => sum + line.coPayCents, 0);
       if (totalCents <= 0) throw new Error("A claim total must be greater than zero");
@@ -1238,6 +1572,8 @@ export async function createShaClaim(
         fund: values.fund,
         empanelmentId: empanelment.id,
         benefitPackageId: packageRow.id,
+        preAuthId: preauth?.id ?? null,
+        coPayAssessmentId: values.coPayAssessmentId ?? null,
         tariffVersion: empanelment.tariffVersion,
         billedAmount,
         patientCoPay,
@@ -1250,14 +1586,15 @@ export async function createShaClaim(
           id: newId(),
           facilityId: values.facilityId,
           claimId,
-          chargeId: line.input.chargeId ?? null,
-          serviceId: line.input.serviceId ?? null,
-          description: line.input.description,
-          amount: line.input.amount,
-          shaServiceCode: line.input.shaServiceCode?.trim() || null,
-          unitPrice: line.input.unitPrice ?? line.input.amount,
-          quantity: String(line.input.quantity),
+          chargeId: line.chargeId ?? null,
+          serviceId: line.serviceId ?? null,
+          description: line.description,
+          amount: line.amount,
+          shaServiceCode: line.shaServiceCode?.trim() || null,
+          unitPrice: line.unitPrice ?? line.amount,
+          quantity: line.quantity,
           approvedAmount: "0",
+          ...lineSnapshot(line),
         })),
       );
       await recordAudit(tx, {
@@ -1272,6 +1609,8 @@ export async function createShaClaim(
           fund: values.fund,
           empanelmentId: empanelment.id,
           benefitPackageId: packageRow.id,
+          preAuthId: preauth?.id ?? null,
+          coPayAssessmentId: values.coPayAssessmentId ?? null,
           invoiceId: invoice.id,
           encounterId: encounter.id,
           total,
@@ -1299,8 +1638,8 @@ export async function createShaClaim(
         patientCoPay,
         lineCount: prepared.length,
         coverage: prepared.map((line) => ({
-          description: line.input.description,
-          shaServiceCode: line.input.shaServiceCode ?? null,
+          description: line.description,
+          shaServiceCode: line.shaServiceCode?.trim() || null,
           coverage: line.coverage,
           billed: fromCents(line.billedCents),
           patientCoPay: fromCents(line.coPayCents),
@@ -1310,6 +1649,80 @@ export async function createShaClaim(
     },
     options,
   );
+}
+
+/**
+ * A draft is locked to the pricing snapshot taken at creation. If the tariff,
+ * coverage, co-pay or linked authorisation changed while it was a draft, the
+ * preparer must rework it rather than silently submitting stale figures.
+ */
+async function assertClaimPricingSnapshot(
+  tx: CommandTransaction,
+  facilityId: string,
+  claim: typeof claims.$inferSelect,
+  lineRows: Array<typeof claimLines.$inferSelect>,
+  today = todayIso(),
+) {
+  if (!claim.fund || !claim.benefitPackageId) return;
+  const packageRow = await assertActiveBenefitPackage(
+    tx,
+    facilityId,
+    claim.benefitPackageId,
+    claim.fund,
+    today,
+  );
+  const preauth = await assertValidClaimPreauth(
+    tx,
+    facilityId,
+    claim.patientId,
+    claim.fund,
+    claim.preAuthId,
+    today,
+  );
+  const itemRows = await tx
+    .select()
+    .from(benefitPackageItems)
+    .where(
+      and(
+        eq(benefitPackageItems.facilityId, facilityId),
+        eq(benefitPackageItems.benefitPackageId, packageRow.id),
+      ),
+    );
+  const priced = priceShaLines(
+    itemRows,
+    lineRows.map((line) => persistedLineInput(line)),
+    preauth,
+  );
+  if (priced.length !== lineRows.length) {
+    throw new Error("The claim line snapshot is incomplete; rework the claim before submission");
+  }
+
+  for (const [index, expected] of priced.entries()) {
+    const line = lineRows[index];
+    const matches =
+      line.shaCoverage === expected.coverage &&
+      line.shaPatientPay === expected.patientPay &&
+      toCents(line.shaBilledAmount) === expected.billedCents &&
+      toCents(line.shaPatientAmount) === expected.coPayCents &&
+      line.shaPreauthRequired === expected.preauthRequired &&
+      toCents(line.amount) === toCents(expected.amount);
+    if (!matches) {
+      throw new Error(
+        `Claim line ${index + 1} no longer matches the active benefit package; rework the claim before submission`,
+      );
+    }
+  }
+
+  const totalCents = priced.reduce((sum, line) => sum + toCents(line.amount), 0);
+  const billedCents = priced.reduce((sum, line) => sum + line.billedCents, 0);
+  const coPayCents = priced.reduce((sum, line) => sum + line.coPayCents, 0);
+  if (
+    toCents(claim.total) !== totalCents ||
+    toCents(claim.billedAmount) !== billedCents ||
+    toCents(claim.patientCoPay) !== coPayCents
+  ) {
+    throw new Error("The claim totals no longer match its line snapshot; rework the claim before submission");
+  }
 }
 
 export const submitShaClaimSchema = z.object({
@@ -1342,6 +1755,12 @@ export async function submitShaClaim(
       if (claim.status !== "draft") throw new Error("Only a draft SHA claim can be submitted");
       assertDifferentActor(userId, claim.createdBy, "The claim preparer cannot submit this claim");
       if (claim.fund) await assertActiveEmpanelment(tx, values.facilityId, claim.empanelmentId!, claim.fund);
+      const lineRows = await tx
+        .select()
+        .from(claimLines)
+        .where(and(eq(claimLines.facilityId, values.facilityId), eq(claimLines.claimId, claim.id)));
+      if (lineRows.length === 0) throw new Error("The claim has no lines");
+      await assertClaimPricingSnapshot(tx, values.facilityId, claim, lineRows);
 
       const now = new Date();
       const shaClaimRef = claim.shaClaimRef ?? `SHA-${claim.claimNo}`;
@@ -1483,10 +1902,26 @@ export async function recordShaAdjudication(
 
       if (status === "accepted") {
         const lineRows = await tx
-          .select({ id: claimLines.id, amount: claimLines.amount })
+          .select({
+            id: claimLines.id,
+            amount: claimLines.shaBilledAmount,
+            patientPay: claimLines.shaPatientPay,
+          })
           .from(claimLines)
           .where(eq(claimLines.claimId, claim.id));
-        for (const allocation of allocateProRata(toCents(approvedAmount), lineRows)) {
+        const billableLines = lineRows
+          .filter((line) => !line.patientPay && toCents(line.amount) > 0)
+          .map((line) => ({ id: line.id, amount: line.amount }));
+        if (billableLines.length === 0) {
+          throw new Error("An accepted SHA claim needs at least one SHA-billable line");
+        }
+        for (const line of lineRows.filter((row) => row.patientPay)) {
+          await tx
+            .update(claimLines)
+            .set({ approvedAmount: "0" })
+            .where(eq(claimLines.id, line.id));
+        }
+        for (const allocation of allocateProRata(toCents(approvedAmount), billableLines)) {
           await tx
             .update(claimLines)
             .set({ approvedAmount: fromCents(allocation.amount) })
@@ -1654,12 +2089,43 @@ export async function reworkShaClaim(
       if (!original.fund || !original.empanelmentId || !original.benefitPackageId) {
         throw new Error("The original claim is not a SHA claim");
       }
-      await assertActiveEmpanelment(
+      const empanelment = await assertActiveEmpanelment(
         tx,
         values.facilityId,
         original.empanelmentId,
         original.fund,
       );
+      const packageRow = await assertActiveBenefitPackage(
+        tx,
+        values.facilityId,
+        original.benefitPackageId,
+        original.fund,
+      );
+      const preauth = await assertValidClaimPreauth(
+        tx,
+        values.facilityId,
+        original.patientId,
+        original.fund,
+        original.preAuthId,
+      );
+      if (original.coPayAssessmentId) {
+        const [assessment] = await tx
+          .select({ id: shaCoPayAssessments.id })
+          .from(shaCoPayAssessments)
+          .where(
+            and(
+              eq(shaCoPayAssessments.facilityId, values.facilityId),
+              eq(shaCoPayAssessments.id, original.coPayAssessmentId),
+              eq(shaCoPayAssessments.patientId, original.patientId),
+              eq(shaCoPayAssessments.encounterId, original.encounterId),
+              eq(shaCoPayAssessments.invoiceId, original.invoiceId ?? ""),
+            ),
+          )
+          .limit(1);
+        if (!assessment) {
+          throw new Error("The linked co-pay assessment no longer matches this claim");
+        }
+      }
 
       const denialRows = await tx
         .select()
@@ -1683,11 +2149,24 @@ export async function reworkShaClaim(
       const adjustments = new Map(
         (values.lineAdjustments ?? []).map((adjustment) => [adjustment.claimLineId, adjustment.amount]),
       );
-      const nextLines = originalLines.map((line) => ({
-        ...line,
-        amount: adjustments.get(line.id) ?? line.amount,
-      }));
-      const totalCents = nextLines.reduce((sum, line) => sum + toCents(line.amount), 0);
+      const adjustedLines = originalLines.map((line) =>
+        persistedLineInput(line, adjustments.get(line.id) ?? line.amount),
+      );
+      const itemRows = await tx
+        .select()
+        .from(benefitPackageItems)
+        .where(
+          and(
+            eq(benefitPackageItems.facilityId, values.facilityId),
+            eq(benefitPackageItems.benefitPackageId, packageRow.id),
+          ),
+        );
+      // Rework re-prices against the current tariff and re-checks coverage and
+      // the carried pre-authorisation before creating the new draft.
+      const priced = priceShaLines(itemRows, adjustedLines, preauth);
+      const billedCents = priced.reduce((sum, line) => sum + line.billedCents, 0);
+      const coPayCents = priced.reduce((sum, line) => sum + line.coPayCents, 0);
+      const totalCents = billedCents + coPayCents;
       if (totalCents <= 0) throw new Error("A reworked claim total must be greater than zero");
 
       const facility = await loadFacility(tx, values.facilityId);
@@ -1705,11 +2184,13 @@ export async function reworkShaClaim(
         fund: original.fund,
         empanelmentId: original.empanelmentId,
         benefitPackageId: original.benefitPackageId,
-        tariffVersion: original.tariffVersion,
+        preAuthId: preauth?.id ?? null,
+        coPayAssessmentId: original.coPayAssessmentId,
+        tariffVersion: empanelment.tariffVersion,
         shaClaimRef: original.shaClaimRef,
         total: fromCents(totalCents),
-        billedAmount: fromCents(totalCents - toCents(original.patientCoPay)),
-        patientCoPay: original.patientCoPay,
+        billedAmount: fromCents(billedCents),
+        patientCoPay: fromCents(coPayCents),
         supersedesClaimId: original.id,
         notes:
           values.note?.trim() ||
@@ -1717,18 +2198,19 @@ export async function reworkShaClaim(
         createdBy: userId,
       });
       await tx.insert(claimLines).values(
-        nextLines.map((line) => ({
+        priced.map((line) => ({
           id: newId(),
           facilityId: values.facilityId,
           claimId,
-          chargeId: line.chargeId,
-          serviceId: line.serviceId,
+          chargeId: line.chargeId ?? null,
+          serviceId: line.serviceId ?? null,
           description: line.description,
           amount: line.amount,
-          shaServiceCode: line.shaServiceCode,
-          unitPrice: line.unitPrice,
+          shaServiceCode: line.shaServiceCode?.trim() || null,
+          unitPrice: line.unitPrice ?? line.amount,
           quantity: line.quantity,
           approvedAmount: "0",
+          ...lineSnapshot(line),
         })),
       );
       await recordAudit(tx, {
@@ -1756,7 +2238,7 @@ export async function reworkShaClaim(
         status: "draft",
         supersedesClaimId: original.id,
         denialReason: denial.reason,
-        lineCount: nextLines.length,
+        lineCount: priced.length,
       };
     },
     options,
@@ -1841,7 +2323,7 @@ export async function recordShaRemittance(
       let waiverId: string | null = null;
       if (excessCents > 0) {
         if (!values.waiverId) {
-          await auditExcessRemittanceRefusal(values, userId, claim, {
+          await auditExcessRemittanceRefusal(options.database ?? db, values, userId, claim, {
             amount: fromCents(amountCents),
             outstanding: fromCents(outstandingCents),
             excess: fromCents(excessCents),
@@ -1863,7 +2345,7 @@ export async function recordShaRemittance(
           )
           .limit(1);
         if (!waiver || toCents(waiver.amount) < excessCents) {
-          await auditExcessRemittanceRefusal(values, userId, claim, {
+          await auditExcessRemittanceRefusal(options.database ?? db, values, userId, claim, {
             amount: fromCents(amountCents),
             excess: fromCents(excessCents),
             waiverId: values.waiverId,
@@ -1872,7 +2354,7 @@ export async function recordShaRemittance(
           throw new Error("The approved waiver does not cover the excess remittance");
         }
         if (waiver.requestedBy === userId) {
-          await auditExcessRemittanceRefusal(values, userId, claim, {
+          await auditExcessRemittanceRefusal(options.database ?? db, values, userId, claim, {
             amount: fromCents(amountCents),
             excess: fromCents(excessCents),
             waiverId: values.waiverId,

@@ -278,10 +278,10 @@ only safe defaults and never guesses an unconfirmed regulator value.
 
 | Role | SHA access |
 | --- | --- |
-| `revenue_cycle_officer` | Owns the workspace: setup, eligibility, pre-auth, claims, denials and rework |
+| `revenue_cycle_officer` | Owns SHA claims and approvals: setup, eligibility, pre-auth, claim build/submit, adjudication, denials and rework |
 | `finance_officer`, `accountant` | Read access plus remittance and reconciliation |
-| `cashier` | Verifies eligibility and records patient co-pay |
-| `admin` | Full access |
+| `cashier` | Verifies eligibility and records patient co-pay via `recordShaCoPay` |
+| `admin`, `super_admin` | Full access |
 
 Separation of duties is enforced in the command layer, not only in the UI: a claim preparer cannot
 submit or adjudicate that claim, a claim approver cannot record its remittance, a pre-auth requester
@@ -290,24 +290,33 @@ cannot decide their own request, and a waiver requester cannot approve or use th
 ### Daily flow
 
 1. **Eligibility** — record the SHA check result against the patient, payer and empanelment. A valid
-   `payer_sharing` consent is required before any claim shares patient data with the payer.
+   `payer_sharing` consent is required before any claim shares patient data with the payer. The
+   cashier records the patient co-pay with `recordShaCoPay` against an eligible check, encounter and
+   invoice; the assessment is retained as immutable evidence and linked to the claim at creation.
 2. **Pre-authorisation** — request and approve an authorisation for expensive or preauth-required
    lines. The claim builder shows per-line coverage (covered / co-pay / excluded / pre-auth
    required) before submission.
 3. **Claims** — build the claim from an encounter and an SHA-claimable invoice. Excluded or unlisted
-   lines are rejected unless explicitly marked patient-pay, in which case they become co-pay and are
-   never billed to SHA. Line amounts reconcile to the cent. Submission allocates
-   `shaClaimRef = SHA-<claimNo>` exactly once; rework copies it unchanged to a new linked draft.
-4. **Denials** — record the configured rejection code, reason and optional line. Rework creates a new
-   draft via `supersedes_claim_id`; the original claim is never edited.
+   lines are rejected unless explicitly marked patient-pay; patient-pay lines are co-pay only and are
+   excluded from SHA billed amounts. Creation stores a per-line snapshot of coverage, SHA-billed
+   amount, patient amount, pre-auth requirement and the empanelment tariff snapshot (version).
+   Submission revalidates the snapshot against the active benefit package and refuses stale figures
+   with a rework instruction; rework re-prices against the current tariff and stores a fresh snapshot.
+   Line amounts reconcile to the cent. Submission allocates `shaClaimRef = SHA-<claimNo>` exactly once.
+4. **Denials** — record the configured rejection code, reason and optional line. Accepted claims
+   allocate the approved amount pro rata only across SHA-billed, non-patient-pay lines; patient-pay
+   lines receive zero approved amount. Rework creates a new draft via `supersedes_claim_id` and reuses
+   the original `shaClaimRef`; the original claim is never edited.
 5. **Remittances** — allocate each receipt to claim lines and sum to the receipt amount. A payment
    above the approved balance is refused and audited until an independent approver approves a
    waiver/exemption covering the excess.
-6. **Reconciliation** — import the SHA payment report by KMPDC number and period. Lines match on
-   KMPDC + period + `shaClaimRef`; unmatched cash stays as a variance row and is never silently
-   written off. The screen shows SHA reported vs facility invoiced vs matched vs variance. Cash is
-   posted to the general ledger only when it has not already been posted by a remittance carrying
-   the same report reference.
+6. **Reconciliation** — import the SHA payment report by KMPDC number and period; a second import for
+   the same KMPDC + period is refused. Lines match on KMPDC + period + `shaClaimRef`; unmatched cash
+   stays as a variance row and is never silently written off. The screen shows SHA reported vs
+   facility invoiced vs matched vs variance. Remittances already posted against the matched claims
+   with the same report reference (or no reference) are deducted first; only the excess SHA cash is
+   posted to the general ledger, so a remittance and a reconciliation import cannot double-count the
+   same receipt.
 
 Claim and remittance documents are print-ready from the workspace and include the facility,
 empanelment, claim/remittance references, line coverage and totals.
@@ -315,11 +324,26 @@ empanelment, claim/remittance references, line coverage and totals.
 ### Controls and verification
 
 All SHA writes go through `src/server/commands/sha.ts` with an idempotency key, one transaction, an
-audit row and a sync outbox row. There are no hard deletes of SHA clinical or financial records.
-Replaying a command with the same idempotency key returns the original result.
+audit row and a sync outbox row. Replaying a command with the same idempotency key returns the stored
+result without re-running guards or writes. No-hard-delete is enforced in the database by
+`protected_record_no_delete_trigger` on SHA master and cycle-evidence tables; change status or create
+a superseding draft instead of deleting a record.
 
-Migrations `0034_wild_phil_sheldon.sql`, `0035_rapid_spiral.sql` and `0036_curly_jane_foster.sql`
-install the SHA schema on local and cloud databases. Verify after a release with:
+`createShaClaim` runs the `assertFacilityReady` guard for the `claiming` action inside the idempotency
+callback. An expired licence or missing setting blocks claim creation with the failing key named in
+the error; a refusal is audited and the transaction rolls back, while a replay of an already
+completed command returns its stored result without re-checking readiness.
+
+Migration `0037_oval_plazm.sql` has been applied locally. It creates `sha_co_pay_assessments`, adds
+the per-line SHA snapshot columns (`sha_patient_pay`, `sha_coverage`, `sha_billed_amount`,
+`sha_patient_amount`, `sha_preauth_required`) and SHA foreign keys on `claim_lines` and `claims`,
+registers SHA tables for sync capture and installs the database-level no-hard-delete triggers. On any
+other target database, including a local rebuild, apply `0034_wild_phil_sheldon.sql`,
+`0035_rapid_spiral.sql` and `0036_curly_jane_foster.sql` together before `0037`; preserve the manual
+sync-registration/capture-trigger block in `0034` when regenerating migrations. Phases 0-22 are
+local builds only; no production deployment is recorded.
+
+Verify after a local change with:
 
 ```bash
 npx tsc --noEmit
