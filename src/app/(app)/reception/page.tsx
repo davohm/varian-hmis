@@ -1,6 +1,8 @@
 import { ClipboardList, UserPlus } from "lucide-react";
 import Link from "next/link";
 
+import { CheckInModal } from "@/components/reception/check-in-panel";
+import { CheckInProvider, CheckInTrigger } from "@/components/reception/check-in-context";
 import { ReceptionWorkspace } from "@/components/reception/reception-workspace";
 import { Screen } from "@/components/shell/screen";
 import { Button } from "@/components/ui/button";
@@ -14,34 +16,38 @@ const RECENT_PATIENT_COUNT = 12;
 export default async function ReceptionPage() {
   const staff = await requireScreen(["receptionist"]);
 
-  // The check-in panel and the combined patient-flow table are server-rendered
-  // on first paint. The client still refreshes them live after hydration.
+  // The combined patient-flow table is server-rendered on first paint. The
+  // check-in modal and live queue refresh are attached after hydration.
   const [{ rows: recentPatients }, triageQueue] = await Promise.all([
     listPatients(db, staff.facilityId, "", RECENT_PATIENT_COUNT, 0),
     getActiveQueue(db, staff.facilityId, "Triage"),
   ]);
 
   return (
-    <Screen
-      title="Front desk"
-      description="Check patients in, start visits, and keep an eye on who is waiting for triage."
-      testId="screen-reception"
-      role={staff.role}
-      eyebrow="Front desk"
-      actions={
-        <>
-          <Button variant="outline" nativeButton={false} render={<Link href="/reception/patients" />}>
-            <ClipboardList aria-hidden="true" />
-            Patient registry
-          </Button>
-          <Button nativeButton={false} render={<Link href="/reception/register" />}>
-            <UserPlus aria-hidden="true" />
-            Register patient
-          </Button>
-        </>
-      }
-    >
-      <ReceptionWorkspace recentPatients={recentPatients} triageQueue={triageQueue} />
-    </Screen>
+    <CheckInProvider>
+      <Screen
+        title="Front desk"
+        description="Check patients in, start visits, and keep an eye on who is waiting for triage."
+        testId="screen-reception"
+        role={staff.role}
+        eyebrow="Front desk"
+        actions={
+          <>
+            <Button variant="outline" nativeButton={false} render={<Link href="/reception/patients" />}>
+              <ClipboardList aria-hidden="true" />
+              Patient registry
+            </Button>
+            <CheckInTrigger />
+            <Button nativeButton={false} render={<Link href="/reception/register" />}>
+              <UserPlus aria-hidden="true" />
+              Register patient
+            </Button>
+          </>
+        }
+      >
+        <ReceptionWorkspace recentPatients={recentPatients} triageQueue={triageQueue} />
+      </Screen>
+      <CheckInModal />
+    </CheckInProvider>
   );
 }

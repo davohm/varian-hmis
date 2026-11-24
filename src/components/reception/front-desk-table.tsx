@@ -5,14 +5,15 @@ import {
   Clock3,
   RefreshCw,
   Search,
+  UserCheck,
   Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { SearchResult } from "@/components/reception/check-in-panel";
 import type { QueueEntry } from "@/components/reception/queue-table";
+import type { SearchResult } from "@/components/reception/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -37,6 +38,7 @@ interface FrontDeskRow {
   timestamp: string;
   priority: QueueEntry["priority"];
   status: FrontDeskStatus;
+  selected: boolean;
   encounterNo?: string;
   queueId?: string;
 }
@@ -116,6 +118,19 @@ function initials(row: Pick<FrontDeskRow, "firstName" | "lastName">): string {
   return `${row.firstName[0] ?? ""}${row.lastName[0] ?? ""}`.toUpperCase();
 }
 
+function rowToPatient(row: FrontDeskRow): SearchResult {
+  return {
+    id: row.patientId,
+    mrn: row.mrn,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    otherNames: row.otherNames,
+    phone: row.phone,
+    dob: row.dob,
+    sex: row.sex,
+  };
+}
+
 function ageFromDob(dob: string | null): string | null {
   if (!dob) return null;
   const birth = new Date(`${dob}T00:00:00Z`);
@@ -151,26 +166,29 @@ function selectVisibleRows(rows: FrontDeskRow[], limit: number): FrontDeskRow[] 
   const queued = rows.filter((row) => row.kind === "queue").sort(byNewest);
   const registered = rows.filter((row) => row.kind === "patient").sort(byNewest);
 
-  const selected: FrontDeskRow[] = [];
+  const picked: FrontDeskRow[] = [];
   const seen = new Set<string>();
   const add = (row: FrontDeskRow) => {
-    if (selected.length >= limit || seen.has(row.id)) return;
-    selected.push(row);
+    if (picked.length >= limit || seen.has(row.id)) return;
+    picked.push(row);
     seen.add(row.id);
   };
+
+  // A patient chosen in the check-in modal always has a visible home in this table.
+  rows.filter((row) => row.selected).forEach(add);
 
   const queueShare = Math.ceil(limit / 2);
   const patientShare = Math.floor(limit / 2);
   queued.slice(0, queueShare).forEach(add);
   registered.slice(0, patientShare).forEach(add);
 
-  if (selected.length < limit) {
+  if (picked.length < limit) {
     for (const row of [...queued.slice(queueShare), ...registered.slice(patientShare)]) {
       add(row);
     }
   }
 
-  return selected;
+  return picked;
 }
 
 function StatusBadge({ status }: { status: FrontDeskStatus }) {
@@ -198,12 +216,18 @@ function StatusBadge({ status }: { status: FrontDeskStatus }) {
 export function FrontDeskTable({
   patients,
   queue,
-  onCheckIn,
+  selectedPatient,
+  onSelectPatient,
+  onStartVisit,
+  checkingIn = false,
   limit = 8,
 }: {
   patients: FrontDeskPatient[];
   queue: QueueEntry[];
-  onCheckIn: (patient: SearchResult) => void;
+  selectedPatient: SearchResult | null;
+  onSelectPatient: (patient: SearchResult) => void;
+  onStartVisit: (patient: SearchResult) => void | Promise<boolean>;
+  checkingIn?: boolean;
   limit?: number;
 }) {
   const [entries, setEntries] = useState<QueueEntry[]>(queue);
@@ -254,7 +278,13 @@ export function FrontDeskTable({
   }, [refresh]);
 
   const rows = useMemo<FrontDeskRow[]>(() => {
-    const patientById = new Map(patients.map((patient) => [patient.id, patient]));
+    const selected = selectedPatient
+      ? { ...selectedPatient, createdAt: selectedPatient.createdAt ?? new Date().toISOString() }
+      : null;
+    const allPatients = selected
+      ? [selected, ...patients.filter((patient) => patient.id !== selected.id)]
+      : patients;
+    const patientById = new Map(allPatients.map((patient) => [patient.id, patient]));
     const queuedPatientIds = new Set(entries.map((entry) => entry.patientId));
 
     const queueRows = entries.map((entry) => {
@@ -273,13 +303,14 @@ export function FrontDeskTable({
         timestamp: entry.queuedAt,
         priority: entry.priority,
         status: entry.status,
+        selected: false,
         encounterNo: entry.encounterNo,
         queueId: entry.id,
       };
     });
 
-    const patientRows = patients
-      .filter((patient) => !queuedPatientIds.has(patient.id))
+    const patientRows = allPatients
+      .filter((patient) => patient.id === selected?.id || !queuedPatientIds.has(patient.id))
       .map((patient) => ({
         id: `patient-${patient.id}`,
         kind: "patient" as const,
@@ -294,10 +325,11 @@ export function FrontDeskTable({
         timestamp: patient.createdAt ?? "",
         priority: "normal" as const,
         status: "ready" as const,
+        selected: patient.id === selected?.id,
       }));
 
     return [...queueRows, ...patientRows];
-  }, [patients, entries]);
+  }, [patients, entries, selectedPatient]);
 
   const filteredRows = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -481,10 +513,17 @@ export function FrontDeskTable({
                 <tr
                   key={row.id}
                   data-testid={row.queueId ? `queue-row-${row.queueId}` : `patient-row-${row.patientId}`}
-                  className="border-b border-border/70 last:border-b-0 hover:bg-muted/20"
+                  data-selected={row.selected || undefined}
+                  className={cn(
+                    "border-b border-border/70 last:border-b-0 hover:bg-muted/20",
+                    row.selected && "bg-[var(--status-normal-background)]/35",
+                  )}
                 >
                   <td className="px-5 py-3">
-                    <div className="flex items-center gap-3">
+                    <div
+                      data-testid={row.selected ? "selected-patient" : undefined}
+                      className="flex items-center gap-3"
+                    >
                       <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-[11px] font-semibold text-primary">
                         {initials(row)}
                       </span>
@@ -507,6 +546,8 @@ export function FrontDeskTable({
                         <span className="font-mono text-xs">{row.encounterNo}</span>
                         <span className="text-xs">Triage</span>
                       </span>
+                    ) : row.selected ? (
+                      <span className="text-xs font-medium text-primary">Selected for check-in</span>
                     ) : (
                       <span className="text-xs">Registration</span>
                     )}
@@ -547,22 +588,23 @@ export function FrontDeskTable({
                       >
                         View
                       </Button>
+                    ) : row.selected ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        data-testid="start-visit-selected"
+                        aria-label={`Start visit for ${row.firstName} ${row.lastName}`}
+                        onClick={() => void onStartVisit(rowToPatient(row))}
+                        disabled={checkingIn}
+                      >
+                        <UserCheck aria-hidden="true" />
+                        {checkingIn ? "Checking in…" : "Start visit"}
+                      </Button>
                     ) : (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() =>
-                          onCheckIn({
-                            id: row.patientId,
-                            mrn: row.mrn,
-                            firstName: row.firstName,
-                            lastName: row.lastName,
-                            otherNames: row.otherNames,
-                            phone: row.phone,
-                            dob: row.dob,
-                            sex: row.sex,
-                          })
-                        }
+                        onClick={() => onSelectPatient(rowToPatient(row))}
                       >
                         Check in
                       </Button>

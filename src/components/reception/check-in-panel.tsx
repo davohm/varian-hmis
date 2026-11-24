@@ -2,10 +2,7 @@
 
 import {
   AlertCircle,
-  ArrowRight,
-  CalendarDays,
   Loader2,
-  Phone,
   RotateCw,
   Search,
   UserCheck,
@@ -14,61 +11,20 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
+import { useCheckIn } from "@/components/reception/check-in-context";
+import type { PatientPayerType, SearchResult } from "@/components/reception/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-export interface SearchResult {
-  id: string;
-  mrn: string;
-  firstName: string;
-  lastName: string;
-  otherNames: string | null;
-  phone: string | null;
-  dob: string | null;
-  sex: string;
-  createdAt?: string;
-}
-
-class SessionMismatchError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SessionMismatchError";
-  }
-}
-
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-device-id": "reception-station" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const detail = (await response.json().catch(() => null)) as {
-      error?: string;
-      detail?: string;
-    } | null;
-    const message = detail?.detail ?? detail?.error ?? `Request failed (${response.status})`;
-    if (response.status === 401 || response.status === 403) {
-      throw new SessionMismatchError(message);
-    }
-    throw new Error(message);
-  }
-  return (await response.json()) as T;
-}
-
-async function handleSessionMismatch(error: unknown): Promise<boolean> {
-  if (!(error instanceof SessionMismatchError)) return false;
-  toast.error("Your session changed. Returning to your workspace.");
-  window.location.assign("/");
-  return true;
-}
-
 function initials(patient: SearchResult): string {
   return `${patient.firstName[0] ?? ""}${patient.lastName[0] ?? ""}`.toUpperCase();
+}
+
+function fullName(patient: SearchResult): string {
+  return [patient.firstName, patient.otherNames, patient.lastName].filter(Boolean).join(" ");
 }
 
 function ageFromDob(dob: string | null): string | null {
@@ -79,33 +35,55 @@ function ageFromDob(dob: string | null): string | null {
   return years >= 0 ? `${years}y` : null;
 }
 
+function maskedNationalId(nationalId: string | null | undefined): string | null {
+  if (!nationalId) return null;
+  const trimmed = nationalId.trim();
+  if (trimmed.length <= 4) return `ID ${trimmed}`;
+  return `ID ••••${trimmed.slice(-4)}`;
+}
+
+const PAYER_LABELS: Record<PatientPayerType, string> = {
+  cash: "Cash payer",
+  sha: "SHA member",
+  insurance: "Insured",
+};
+
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 250;
 const MAX_CACHE_ENTRIES = 30;
 
 type SearchState = "idle" | "too-short" | "loading" | "ready" | "error";
 
-export function CheckInPanel({
-  onCheckedIn,
-  selectedPatient,
-  onSelectedPatientChange,
-}: {
-  onCheckedIn?: () => void;
-  selectedPatient: SearchResult | null;
-  onSelectedPatientChange: (patient: SearchResult | null) => void;
-}) {
+/**
+ * Registry lookup lives in a modal so reception has a single patient-flow table.
+ * A result can be handed to that table or started as a visit directly.
+ */
+export function CheckInModal() {
+  const {
+    dialogRef,
+    setSelectedPatient,
+    closeCheckIn,
+    registerSearchFocus,
+    checkIn,
+    checkingIn,
+  } = useCheckIn();
   const [searchTerm, setSearchTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchedTerm, setSearchedTerm] = useState("");
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [checkInPending, setCheckInPending] = useState(false);
-  const [keys, setKeys] = useState<Record<string, { visit: string; queue: string }>>({});
+  const [retryToken, setRetryToken] = useState(0);
+  const [startingPatientId, setStartingPatientId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
   const cacheRef = useRef(new Map<string, SearchResult[]>());
-  const [retryToken, setRetryToken] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    registerSearchFocus(() => searchRef.current?.focus());
+    return () => registerSearchFocus(() => {});
+  }, [registerSearchFocus]);
 
   const rememberResults = useCallback((term: string, patients: SearchResult[]) => {
     const cache = cacheRef.current;
@@ -150,7 +128,7 @@ export function CheckInPanel({
     const requestId = ++requestIdRef.current;
     const timer = setTimeout(async () => {
       // Keep the previous list visible while the next term resolves, so the
-      // panel never collapses to an empty box between keystrokes.
+      // modal never collapses to an empty box between keystrokes.
       setSearchState("loading");
       setSearchError(null);
       try {
@@ -183,93 +161,101 @@ export function CheckInPanel({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const checkIn = useCallback(
-    async (patient: SearchResult) => {
-      setCheckInPending(true);
-      try {
-        const patientKeys = keys[patient.id] ?? {
-          visit: crypto.randomUUID(),
-          queue: crypto.randomUUID(),
-        };
-        if (!keys[patient.id]) setKeys((current) => ({ ...current, [patient.id]: patientKeys }));
-
-        const visit = await postJson<{ encounterId: string }>("/api/reception/start-visit", {
-          patientId: patient.id,
-          idempotencyKey: patientKeys.visit,
-        });
-        await postJson("/api/reception/queue", {
-          encounterId: visit.encounterId,
-          idempotencyKey: patientKeys.queue,
-          department: "Triage",
-          priority: "normal",
-        });
-        toast.success(`${patient.firstName} ${patient.lastName} queued for triage`);
-        onSelectedPatientChange(null);
-        setSearchTerm("");
-        setResults([]);
-        setSearchedTerm("");
-        setSearchState("idle");
-        onCheckedIn?.();
-      } catch (error) {
-        if (await handleSessionMismatch(error)) return;
-        toast.error(error instanceof Error ? error.message : "Could not check in patient");
-      } finally {
-        setCheckInPending(false);
-      }
-    },
-    [keys, onCheckedIn, onSelectedPatientChange],
-  );
-
-  const clearSearch = useCallback(() => {
+  const clearResults = useCallback(() => {
     abortRef.current?.abort();
-    setSearchTerm("");
     setResults([]);
     setSearchedTerm("");
     setSearchError(null);
     setSearchState("idle");
-    onSelectedPatientChange(null);
-  }, [onSelectedPatientChange]);
+    setSearchTerm("");
+  }, []);
+
+  const selectPatient = useCallback(
+    (patient: SearchResult) => {
+      clearResults();
+      setSelectedPatient(patient);
+      closeCheckIn();
+    },
+    [clearResults, closeCheckIn, setSelectedPatient],
+  );
+
+  const startVisit = useCallback(
+    async (patient: SearchResult) => {
+      if (checkingIn || startingPatientId) return;
+      setStartingPatientId(patient.id);
+      try {
+        const started = await checkIn(patient);
+        if (started) {
+          clearResults();
+          closeCheckIn();
+        }
+      } finally {
+        setStartingPatientId(null);
+      }
+    },
+    [checkIn, checkingIn, clearResults, closeCheckIn, startingPatientId],
+  );
+
+  const clearSearch = useCallback(() => {
+    clearResults();
+  }, [clearResults]);
 
   const term = searchTerm.trim();
-  const showSearchResults = term.length > 0 && !selectedPatient;
+  const showSearchResults = term.length > 0;
   const isSearching = searchState === "loading";
   const hasResults = results.length > 0;
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-      <div className="border-b border-border/80 px-5 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">Check in a patient</h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Search the registry, confirm the record, then start the visit and send the patient to
-              triage.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/reception/register" />}>
-            <UserPlus aria-hidden="true" />
-            New patient
-          </Button>
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="check-in-title"
+      aria-describedby="check-in-description"
+      data-testid="check-in-dialog"
+      className="m-auto w-[calc(100%-2rem)] max-w-2xl overflow-hidden rounded-xl border border-border bg-card p-0 text-foreground shadow-xl backdrop:bg-black/50"
+      onCancel={(event) => {
+        event.preventDefault();
+        closeCheckIn();
+      }}
+    >
+      <div className="flex items-start justify-between gap-4 border-b border-border/80 px-5 py-4">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+            Reception
+          </p>
+          <h2 id="check-in-title" className="mt-1 text-base font-semibold text-foreground">
+            Check in a patient
+          </h2>
+          <p id="check-in-description" className="mt-1 text-sm leading-6 text-muted-foreground">
+            Find the record, then select it for the patient-flow table or start the visit here.
+          </p>
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={closeCheckIn}
+          aria-label="Close check-in"
+        >
+          <X aria-hidden="true" />
+        </Button>
       </div>
 
-      <div className="space-y-4 p-5">
+      <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">
         <div className="relative">
           <Search
             className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
           />
           <Input
+            ref={searchRef}
             id="patient-search"
             data-testid="patient-search"
             className="h-11 pr-10 pl-10 text-[15px]"
             placeholder="Name, MRN, phone, or national ID"
             value={searchTerm}
-            onChange={(event) => {
-              setSearchTerm(event.target.value);
-              if (selectedPatient) onSelectedPatientChange(null);
-            }}
+            onChange={(event) => setSearchTerm(event.target.value)}
             autoComplete="off"
+            autoFocus
             aria-label="Search patients"
             aria-describedby="patient-search-hint"
             style={{}}
@@ -296,70 +282,6 @@ export function CheckInPanel({
           Type at least {MIN_QUERY_LENGTH} characters to search.
         </p>
 
-        {selectedPatient ? (
-          <div
-            data-testid="selected-patient"
-            className="rounded-lg border border-[var(--status-normal)]/25 bg-[var(--status-normal-background)]/30 p-4"
-          >
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="grid size-11 shrink-0 place-items-center rounded-full bg-card font-semibold text-primary ring-1 ring-border">
-                  {initials(selectedPatient)}
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-base font-semibold text-foreground">
-                    {selectedPatient.firstName} {selectedPatient.lastName}
-                  </p>
-                  <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                    {selectedPatient.mrn}
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onSelectedPatientChange(null)}
-                  disabled={checkInPending}
-                >
-                  Change
-                </Button>
-                <Button
-                  type="button"
-                  data-testid="start-visit-selected"
-                  onClick={() => void checkIn(selectedPatient)}
-                  disabled={checkInPending}
-                >
-                  <UserCheck aria-hidden="true" />
-                  {checkInPending ? "Checking in…" : "Start visit & queue"}
-                </Button>
-              </div>
-            </div>
-            <dl className="mt-4 grid gap-3 border-t border-border/60 pt-3 text-sm sm:grid-cols-3">
-              <div>
-                <dt className="text-xs text-muted-foreground">Phone</dt>
-                <dd className="mt-0.5 flex items-center gap-1.5 text-foreground">
-                  <Phone className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {selectedPatient.phone ?? "Not recorded"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Date of birth</dt>
-                <dd className="mt-0.5 flex items-center gap-1.5 text-foreground">
-                  <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {selectedPatient.dob
-                    ? `${selectedPatient.dob}${ageFromDob(selectedPatient.dob) ? ` · ${ageFromDob(selectedPatient.dob)}` : ""}`
-                    : "Not recorded"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Sex</dt>
-                <dd className="mt-0.5 capitalize text-foreground">{selectedPatient.sex}</dd>
-              </div>
-            </dl>
-          </div>
-        ) : null}
-
         {showSearchResults ? (
           <div
             className="overflow-hidden rounded-lg border border-border bg-background"
@@ -378,7 +300,7 @@ export function CheckInPanel({
                         : `${results.length} result${results.length === 1 ? "" : "s"}`}
               </p>
               {searchState === "ready" && hasResults ? (
-                <p className="shrink-0 text-xs text-muted-foreground">Select a record</p>
+                <p className="shrink-0 text-xs text-muted-foreground">Select or start visit</p>
               ) : null}
             </div>
 
@@ -431,48 +353,92 @@ export function CheckInPanel({
                 )}
                 data-testid="search-results"
               >
-                {results.map((patient) => (
-                  <li key={patient.id}>
-                    <button
-                      type="button"
-                      data-testid={`patient-result-${patient.id}`}
-                      onClick={() => {
-                        onSelectedPatientChange(patient);
-                        setResults([]);
-                      }}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                {results.map((patient) => {
+                  const age = ageFromDob(patient.dob);
+                  const nationalId = maskedNationalId(patient.nationalId);
+                  const payerLabel = patient.payerType
+                    ? (PAYER_LABELS[patient.payerType] ?? null)
+                    : null;
+                  const busy = startingPatientId === patient.id;
+                  const startDisabled = checkingIn || startingPatientId !== null;
+
+                  return (
+                    <li
+                      key={patient.id}
+                      className="flex items-center gap-2 px-3 py-3 transition-colors hover:bg-muted/40"
                     >
-                      <div className="flex min-w-0 items-center gap-3">
+                      <button
+                        type="button"
+                        data-testid={`patient-result-${patient.id}`}
+                        onClick={() => selectPatient(patient)}
+                        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                      >
                         <span className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold text-primary">
                           {initials(patient)}
                         </span>
-                        <div className="min-w-0">
+                        <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium text-foreground">
-                            {patient.firstName} {patient.lastName}
+                            {fullName(patient)}
                           </span>
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {[patient.phone, patient.dob ? `DOB ${patient.dob}` : null]
-                              .filter(Boolean)
-                              .join(" · ") || "No phone or DOB on file"}
+                          <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span className="font-mono">
+                              <span className="sr-only">MRN </span>
+                              {patient.mrn}
+                            </span>
+                            {patient.sex ? (
+                              <span>
+                                <span className="sr-only">Sex </span>
+                                {patient.sex}
+                              </span>
+                            ) : null}
+                            {age ? (
+                              <span>
+                                <span className="sr-only">Age </span>
+                                {age}
+                              </span>
+                            ) : null}
+                            {patient.phone ? (
+                              <span>
+                                <span className="sr-only">Phone </span>
+                                {patient.phone}
+                              </span>
+                            ) : null}
+                            {patient.dob ? <span>DOB {patient.dob}</span> : null}
+                            {nationalId && patient.nationalId ? (
+                              <>
+                                <span aria-hidden="true">{nationalId}</span>
+                                <span className="sr-only">
+                                  National ID ending {patient.nationalId.trim().slice(-4)}
+                                </span>
+                              </>
+                            ) : null}
+                            {payerLabel ? <span>{payerLabel}</span> : null}
                           </span>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {patient.mrn}
                         </span>
-                        <ArrowRight className="size-4 text-muted-foreground" aria-hidden="true" />
-                      </div>
-                    </button>
-                  </li>
-                ))}
+                        <span className="shrink-0 text-xs font-medium text-primary">Select</span>
+                      </button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        data-testid={`start-visit-${patient.id}`}
+                        aria-label={`Start visit for ${fullName(patient)}`}
+                        onClick={() => void startVisit(patient)}
+                        disabled={startDisabled}
+                        className="shrink-0"
+                      >
+                        <UserCheck aria-hidden="true" />
+                        {busy ? "Starting…" : checkingIn ? "Working…" : "Start visit"}
+                      </Button>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <div className="p-4">
                 <p className="text-sm font-medium text-foreground">No matching patient</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Nothing matches “{searchedTerm || term}”. Check the spelling, MRN or phone
-                  number, or create a new record.
+                  Nothing matches “{searchedTerm || term}”. Check the spelling, MRN, phone or
+                  national ID, or create a new record.
                 </p>
                 <Button
                   variant="outline"
@@ -487,9 +453,7 @@ export function CheckInPanel({
               </div>
             )}
           </div>
-        ) : null}
-
-        {!term && !selectedPatient ? (
+        ) : (
           <div className="rounded-lg border border-dashed border-border bg-muted/15 px-4 py-6">
             <p className="text-sm font-medium text-foreground">Ready for the next patient</p>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -497,8 +461,8 @@ export function CheckInPanel({
               Results appear as you type.
             </p>
           </div>
-        ) : null}
+        )}
       </div>
-    </section>
+    </dialog>
   );
 }

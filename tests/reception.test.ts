@@ -252,12 +252,18 @@ describe("reception commands", () => {
     });
   });
 
-  it("searches by name, MRN and phone, scoped to the facility", async () => {
+  it("searches by name, MRN, phone and national ID with payer details", async () => {
     const first = await insertTestFacility(ctx.db);
     const second = await insertTestFacility(ctx.db);
     try {
       const target = await registerPatient(
-        patientInput(first.id, { firstName: "Amina", lastName: "Otieno", phone: "0711111111" }),
+        patientInput(first.id, {
+          firstName: "Amina",
+          lastName: "Otieno",
+          phone: "0711111111",
+          nationalId: "NAT-987654321",
+          payerType: "sha",
+        }),
         { database: ctx.db },
       );
       await registerPatient(
@@ -272,10 +278,16 @@ describe("reception commands", () => {
       const byName = await searchPatients(ctx.db, first.id, "amin");
       const byMrn = await searchPatients(ctx.db, first.id, target.mrn.toLowerCase());
       const byPhone = await searchPatients(ctx.db, first.id, "711111");
+      const byNationalId = await searchPatients(ctx.db, first.id, "nat-987");
 
       expect(byName.map((row) => row.id)).toEqual([target.patientId]);
       expect(byMrn.map((row) => row.id)).toEqual([target.patientId]);
       expect(byPhone.map((row) => row.id)).toContain(target.patientId);
+      expect(byNationalId.map((row) => row.id)).toEqual([target.patientId]);
+      expect(byName[0]).toMatchObject({
+        nationalId: "NAT-987654321",
+        payerType: "sha",
+      });
     } finally {
       await cleanupTestFacility(ctx.db, first.id);
       await cleanupTestFacility(ctx.db, second.id);

@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
-
-import { CheckInPanel, type SearchResult } from "@/components/reception/check-in-panel";
+import { useCheckIn } from "@/components/reception/check-in-context";
 import {
   FrontDeskTable,
   type FrontDeskPatient,
@@ -16,21 +14,17 @@ export function ReceptionWorkspace({
   recentPatients?: FrontDeskPatient[];
   triageQueue?: QueueEntry[];
 }) {
-  const [selectedPatient, setSelectedPatient] = useState<SearchResult | null>(null);
+  const { selectedPatient, setSelectedPatient, checkIn, checkingIn } = useCheckIn();
 
   return (
-    <div className="space-y-6">
-      <CheckInPanel
-        selectedPatient={selectedPatient}
-        onSelectedPatientChange={setSelectedPatient}
-        onCheckedIn={() => setSelectedPatient(null)}
-      />
-      <FrontDeskTable
-        patients={recentPatients}
-        queue={triageQueue}
-        onCheckIn={setSelectedPatient}
-        limit={8}
-      />
-    </div>
+    <FrontDeskTable
+      patients={recentPatients}
+      queue={triageQueue}
+      selectedPatient={selectedPatient}
+      onSelectPatient={setSelectedPatient}
+      onStartVisit={checkIn}
+      checkingIn={checkingIn}
+      limit={8}
+    />
   );
 }

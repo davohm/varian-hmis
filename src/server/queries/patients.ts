@@ -25,6 +25,8 @@ export interface PatientSearchResult {
   phone: string | null;
   dob: string | null;
   sex: string;
+  nationalId: string | null;
+  payerType: "cash" | "sha" | "insurance";
 }
 
 /**
@@ -46,7 +48,9 @@ export async function searchPatients(
   const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 50);
 
   const result = await db.execute(sql`
-    SELECT p.id, p.mrn, p.first_name, p.last_name, p.other_names, p.phone, p.dob, p.sex
+    SELECT
+      p.id, p.mrn, p.first_name, p.last_name, p.other_names,
+      p.phone, p.dob, p.sex, p.national_id, p.payer_type
     FROM patients p
     WHERE p.facility_id = ${facilityId}::uuid
       AND (
@@ -73,6 +77,8 @@ export async function searchPatients(
     phone: row.phone == null ? null : text(row.phone),
     dob: row.dob == null ? null : text(row.dob),
     sex: text(row.sex),
+    nationalId: row.national_id == null ? null : text(row.national_id),
+    payerType: text(row.payer_type) as "cash" | "sha" | "insurance",
   }));
 }
 
