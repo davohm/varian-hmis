@@ -12,8 +12,8 @@ async function signIn(page: Page, email: string) {
 }
 
 async function registerPatient(page: Page, suffix: string) {
-  await page.goto("/reception");
-  await expect(page.getByTestId("screen-reception")).toBeVisible();
+  await page.goto("/reception/register");
+  await expect(page.getByTestId("screen-reception-register")).toBeVisible();
 
   await page.getByTestId("patient-first-name").fill(`Cross${suffix}`);
   await page.getByTestId("patient-last-name").fill("Station");

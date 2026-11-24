@@ -4,6 +4,7 @@ export interface NavItem {
   label: string;
   href: string;
   description: string;
+  group?: string;
 }
 
 export const ROLE_NAV: Record<Role, NavItem> = {
@@ -104,9 +105,71 @@ export const ROLE_NAV: Record<Role, NavItem> = {
   },
 };
 
+/**
+ * Every role keeps one primary workspace so guards, redirects and audit
+ * labels stay stable. Roles whose day spans more than one screen get extra
+ * entries; the sidebar groups them by task instead of hiding them behind
+ * a single link.
+ */
+export const ROLE_NAV_ITEMS: Record<Role, NavItem[]> = {
+  ...(Object.fromEntries(
+    Object.entries(ROLE_NAV).map(([role, item]) => [
+      role,
+      [{ ...item, group: "Workspace" }],
+    ]),
+  ) as Record<Role, NavItem[]>),
+  receptionist: [
+    {
+      label: "Reception",
+      href: "/reception",
+      description: "Check patients in and keep the visit queue moving.",
+      group: "Front desk",
+    },
+    {
+      label: "Queue",
+      href: "/reception/queue",
+      description: "Watch every waiting patient and their wait time.",
+      group: "Front desk",
+    },
+    {
+      label: "Register patient",
+      href: "/reception/register",
+      description: "Create a new medical record and start a visit.",
+      group: "Patients",
+    },
+    {
+      label: "Patient registry",
+      href: "/reception/patients",
+      description: "Search the facility's patient records.",
+      group: "Patients",
+    },
+  ],
+};
+
 export const ROLE_HOME: Record<Role, string> = Object.fromEntries(
   Object.entries(ROLE_NAV).map(([role, item]) => [role, item.href]),
 ) as Record<Role, string>;
+
+/**
+ * Front-line staff are bound to the branch they report to. Their header shows
+ * that branch as a title. Switching is reserved for roles whose job spans
+ * facilities, and even then only when the account actually has more than one.
+ */
+export const FACILITY_SWITCH_ROLES: Role[] = [
+  "accountant",
+  "finance_officer",
+  "revenue_cycle_officer",
+  "procurement_officer",
+  "store_manager",
+  "hr_officer",
+  "payroll_officer",
+  "asset_manager",
+  "auditor",
+  "regulatory_officer",
+  "dpo",
+  "admin",
+  "super_admin",
+];
 
 export const ROLE_LABELS: Record<Role, string> = {
   receptionist: "Receptionist",

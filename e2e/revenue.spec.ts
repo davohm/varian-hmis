@@ -51,8 +51,8 @@ async function registerVisit(browser: Browser, suffix: string): Promise<string> 
   try {
     const page = await context.newPage();
     await signIn(page, "receptionist@fam.test");
-    await page.goto("/reception");
-    await expect(page.getByTestId("screen-reception")).toBeVisible();
+    await page.goto("/reception/register");
+    await expect(page.getByTestId("screen-reception-register")).toBeVisible();
 
     await page.getByTestId("patient-first-name").fill(`Rev${suffix}`);
     await page.getByTestId("patient-last-name").fill("Payer");

@@ -365,31 +365,41 @@ interface ScreenProps {
   description: string;
   testId: string;
   role?: Role | null;
+  eyebrow?: string;
+  actions?: React.ReactNode;
   children?: React.ReactNode;
 }
 
-export function Screen({ title, description, testId, role, children }: ScreenProps) {
+export function Screen({
+  title,
+  description,
+  testId,
+  role,
+  eyebrow,
+  actions,
+  children,
+}: ScreenProps) {
   const tasks = role ? WORKSPACE_TASKS[role] : null;
 
   return (
-    <section data-testid={testId} className="mx-auto w-full max-w-6xl">
-      <header className="border-b border-border pb-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground uppercase">
-            Varian HMIS · Workspace
-          </span>
-          {role ? (
-            <span className="inline-flex items-center rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
-              {ROLE_LABELS[role]}
-            </span>
-          ) : null}
+    <section data-testid={testId} className="mx-auto w-full max-w-7xl">
+      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+            {role ? <span>{ROLE_LABELS[role]}</span> : null}
+            {role ? <span className="size-1 rounded-full bg-border" aria-hidden="true" /> : null}
+            <span>{eyebrow ?? "Workspace"}</span>
+          </div>
+          <h1 className="mt-1.5 text-[1.6rem] font-semibold tracking-tight text-foreground sm:text-[1.75rem]">
+            {title}
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
-        <h1 className="mt-3 text-2xl font-semibold text-primary">{title}</h1>
-        <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
+        {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </header>
 
       {children ? (
-        <div className="mt-6">{children}</div>
+        <div>{children}</div>
       ) : (
         <div className="mt-6 space-y-6">
           {tasks ? (

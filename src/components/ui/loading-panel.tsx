@@ -1,5 +1,7 @@
 import * as React from "react";
-import { cn } from "cn";
+
+import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface LoadingPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Announced to assistive technology. Keep it short, e.g. "Loading". */
@@ -9,7 +11,7 @@ export interface LoadingPanelProps extends React.HTMLAttributes<HTMLDivElement> 
   rows?: number;
 }
 
-const SKELETON_WIDTHS = ["w-full", "w-11/12", "w-4/5", "w-full", "w-2/3"] as const;
+const SKELETON_WIDTHS = ["w-full", "w-[92%]", "w-4/5", "w-full", "w-2/3"] as const;
 
 /**
  * Accessible loading placeholder. The live region is announced once when it
@@ -31,21 +33,26 @@ export function LoadingPanel({
       role="status"
       aria-live="polite"
       aria-busy="true"
-      className={cn("rounded-lg border border-border bg-card p-6", className)}
+      className={cn(
+        "overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]",
+        className,
+      )}
       {...props}
     >
       <span className="sr-only">{label}</span>
-      {title ? (
-        <p className="mb-4 text-sm font-medium text-primary">{title}</p>
-      ) : null}
-      <div aria-hidden="true" className="space-y-3">
+      <div className="border-b border-border/80 px-5 py-4">
+        {title ? (
+          <p className="text-sm font-medium text-foreground">{title}</p>
+        ) : (
+          <Skeleton className="h-4 w-36" />
+        )}
+        <Skeleton className="mt-2 h-3 w-56 max-w-full" />
+      </div>
+      <div aria-hidden="true" className="space-y-3 px-5 py-5">
         {Array.from({ length: rowCount }, (_, index) => (
-          <div
+          <Skeleton
             key={index}
-            className={cn(
-              "varian-skeleton h-3 rounded bg-muted motion-safe:animate-pulse motion-reduce:animate-none",
-              SKELETON_WIDTHS[index],
-            )}
+            className={cn("h-3", SKELETON_WIDTHS[index % SKELETON_WIDTHS.length])}
           />
         ))}
       </div>

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Inbox, type LucideIcon } from "lucide-react";
-import { cn } from "cn";
+
+import { cn } from "@/lib/utils";
 
 export interface EmptyStateProps extends React.HTMLAttributes<HTMLElement> {
   title: string;
@@ -33,29 +34,21 @@ export function EmptyState({
       role="status"
       aria-live="polite"
       className={cn(
-        "flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-12 text-center",
+        "flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/60 px-6 py-12 text-center",
         className,
       )}
       {...props}
     >
       <span
-        className="grid size-10 place-items-center rounded-full bg-secondary text-primary"
+        className="grid size-11 place-items-center rounded-xl bg-secondary text-primary ring-1 ring-border/60"
         aria-hidden="true"
       >
         <Icon className="size-5" aria-hidden="true" />
       </span>
-      <Heading className="mt-4 text-base font-semibold text-primary">
-        {title}
-      </Heading>
-      <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-        {description}
-      </p>
+      <Heading className="mt-4 text-sm font-semibold text-foreground">{title}</Heading>
+      <p className="mt-1.5 max-w-md text-sm leading-6 text-muted-foreground">{description}</p>
       {children}
-      {action ? (
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          {action}
-        </div>
-      ) : null}
+      {action ? <div className="mt-5 flex flex-wrap items-center justify-center gap-2">{action}</div> : null}
     </section>
   );
 }

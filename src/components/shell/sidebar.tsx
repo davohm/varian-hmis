@@ -3,6 +3,7 @@
 import {
   Banknote,
   ClipboardList,
+  Clock3,
   FlaskConical,
   HeartPulse,
   Landmark,
@@ -10,9 +11,10 @@ import {
   Pill,
   Receipt,
   ShieldCheck,
-  ShoppingCart,
   ShieldPlus,
+  ShoppingCart,
   Stethoscope,
+  UserPlus,
   Users,
   Wallet,
   Wrench,
@@ -21,7 +23,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { REPORT_READ_ROLES, ROLE_LABELS, ROLE_NAV } from "@/lib/navigation";
+import { REPORT_READ_ROLES, ROLE_LABELS, ROLE_NAV_ITEMS } from "@/lib/navigation";
 import type { Role } from "@/server/db/schema/staff";
 import { cn } from "@/lib/utils";
 
@@ -47,86 +49,180 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   super_admin: ShieldCheck,
 };
 
+const ITEM_ICONS: Record<string, LucideIcon> = {
+  "/reception": ClipboardList,
+  "/reception/queue": Clock3,
+  "/reception/register": UserPlus,
+  "/reception/patients": Users,
+  "/reports": ClipboardList,
+};
+
 interface SidebarProps {
   role: Role | null;
+  onNavigate?: () => void;
+  className?: string;
+  branchName?: string | null;
+  facilityName?: string | null;
 }
 
-export function Sidebar({ role }: SidebarProps) {
+interface NavGroup {
+  label: string;
+  items: ReturnType<typeof navItemsFor>;
+}
+
+function navItemsFor(role: Role) {
+  return ROLE_NAV_ITEMS[role] ?? [];
+}
+
+function activeHref(pathname: string, hrefs: string[]): string | null {
+  const matches = hrefs.filter(
+    (href) => pathname === href || pathname.startsWith(`${href}/`),
+  );
+  if (matches.length === 0) return null;
+  return matches.sort((a, b) => b.length - a.length)[0];
+}
+
+function groupItems(role: Role): NavGroup[] {
+  const groups = new Map<string, ReturnType<typeof navItemsFor>>();
+  for (const item of navItemsFor(role)) {
+    const group = item.group ?? "Workspace";
+    const bucket = groups.get(group) ?? [];
+    bucket.push(item);
+    groups.set(group, bucket);
+  }
+  return Array.from(groups, ([label, items]) => ({ label, items }));
+}
+
+export function Sidebar({
+  role,
+  onNavigate,
+  className,
+  branchName,
+  facilityName,
+}: SidebarProps) {
   const pathname = usePathname();
-  const item = role ? ROLE_NAV[role] : null;
-  const Icon = role ? ROLE_ICONS[role] : ClipboardList;
-  const active = item
-    ? pathname === item.href || pathname.startsWith(`${item.href}/`)
-    : false;
+  const items = role ? navItemsFor(role) : [];
   const canViewReports = role ? REPORT_READ_ROLES.includes(role) : false;
-  const reportsActive = pathname === "/reports" || pathname.startsWith("/reports/");
+  const reportsActive =
+    pathname === "/reports" || pathname.startsWith("/reports/");
+  const currentHref = activeHref(
+    pathname,
+    canViewReports ? [...items.map((item) => item.href), "/reports"] : items.map((item) => item.href),
+  );
+  const groups = role ? groupItems(role) : [];
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
-      <div className="border-b border-sidebar-border px-5 py-5">
+    <aside
+      className={cn(
+        "flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground",
+        className,
+      )}
+    >
+      <div className="px-5 py-5">
         <div className="flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-md bg-sidebar-primary">
+          <span className="grid size-9 place-items-center rounded-lg bg-sidebar-primary shadow-sm">
             <ShieldPlus className="size-5 text-sidebar-primary-foreground" aria-hidden="true" />
           </span>
-          <div>
-            <div className="text-sm font-semibold tracking-wide">Varian HMIS</div>
-            <div className="font-mono text-[10px] tracking-[0.18em] text-sidebar-foreground/65 uppercase">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold tracking-wide">Varian HMIS</div>
+            <div className="truncate font-mono text-[10px] tracking-[0.16em] text-sidebar-foreground/60 uppercase">
               Patient care system
             </div>
           </div>
         </div>
       </div>
 
-      <nav aria-label="Role navigation" className="flex-1 px-3 py-4">
-        <div className="px-2 pb-2 font-mono text-[10px] tracking-[0.18em] text-sidebar-foreground/60 uppercase">
-          Workspace
-        </div>
-        {item ? (
-          <Link
-            href={item.href}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-              active
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-            )}
-          >
-            {active ? (
-              <span
-                aria-hidden="true"
-                className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-sidebar-primary"
-              />
-            ) : null}
-            <Icon className="size-4" aria-hidden="true" />
-            <span>{item.label}</span>
-          </Link>
+      <nav aria-label="Role navigation" className="flex-1 space-y-5 overflow-y-auto px-3 pb-4">
+        {groups.length > 0 ? (
+          groups.map((group) => (
+            <div key={group.label}>
+              <div className="px-2 pb-1.5 font-mono text-[10px] tracking-[0.16em] text-sidebar-foreground/50 uppercase">
+                {group.label}
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const Icon = ITEM_ICONS[item.href] ?? (role ? ROLE_ICONS[role] : ClipboardList);
+                  const active = currentHref === item.href;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      onClick={onNavigate}
+                      className={cn(
+                        "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                        active
+                          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                          : "text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+                      )}
+                    >
+                      {active ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-sidebar-primary"
+                        />
+                      ) : null}
+                      <Icon
+                        className={cn(
+                          "size-4 shrink-0",
+                          active ? "text-sidebar-primary" : "text-sidebar-foreground/55",
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))
         ) : (
           <p className="px-3 py-2 text-sm text-sidebar-foreground/70">No role assigned.</p>
         )}
+
         {canViewReports ? (
-          <Link
-            href="/reports"
-            data-testid="nav-reports"
-            aria-current={reportsActive ? "page" : undefined}
-            className={cn(
-              "relative mt-2 flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
-              reportsActive
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
-            )}
-          >
-            <ClipboardList className="size-4" aria-hidden="true" />
-            <span>Reports</span>
-          </Link>
+          <div>
+            <div className="px-2 pb-1.5 font-mono text-[10px] tracking-[0.16em] text-sidebar-foreground/50 uppercase">
+              Insights
+            </div>
+            <Link
+              href="/reports"
+              data-testid="nav-reports"
+              aria-current={reportsActive ? "page" : undefined}
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                reportsActive
+                  ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+              )}
+            >
+              <ClipboardList
+                className={cn(
+                  "size-4 shrink-0",
+                  reportsActive ? "text-sidebar-primary" : "text-sidebar-foreground/55",
+                )}
+                aria-hidden="true"
+              />
+              <span>Reports</span>
+            </Link>
+          </div>
         ) : null}
       </nav>
 
       <div className="border-t border-sidebar-border px-5 py-4">
-        <div className="font-mono text-[10px] tracking-[0.18em] text-sidebar-foreground/60 uppercase">
+        <div className="font-mono text-[10px] tracking-[0.16em] text-sidebar-foreground/50 uppercase">
           Signed in as
         </div>
-        <div className="mt-1 text-sm font-medium">{role ? ROLE_LABELS[role] : "Staff"}</div>
+        <div className="mt-1 truncate text-sm font-medium">
+          {role ? ROLE_LABELS[role] : "Staff"}
+        </div>
+        {branchName ? (
+          <div className="mt-0.5 truncate text-xs text-sidebar-foreground/60">
+            {branchName}
+            {facilityName ? ` · ${facilityName}` : ""}
+          </div>
+        ) : null}
       </div>
     </aside>
   );

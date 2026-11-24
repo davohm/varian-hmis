@@ -12,8 +12,8 @@ async function signIn(page: Page, email: string) {
 }
 
 async function registerPatientWithVisit(page: Page, suffix: string) {
-  await page.goto("/reception");
-  await expect(page.getByTestId("screen-reception")).toBeVisible();
+  await page.goto("/reception/register");
+  await expect(page.getByTestId("screen-reception-register")).toBeVisible();
 
   await page.getByTestId("patient-first-name").fill(`Pharm${suffix}`);
   await page.getByTestId("patient-last-name").fill("Counter");

@@ -72,16 +72,20 @@ describe("UI hardening source contracts", () => {
     expect(panel).toContain('className="sr-only"');
     expect(panel).toContain('label = "Loading"');
     expect(panel).toContain("{label}");
-    expect(panel).toContain("varian-skeleton");
-    expect(panel).toContain("motion-safe:animate-pulse");
-    expect(panel).toContain("motion-reduce:animate-none");
+    expect(panel).toContain("<Skeleton");
+
+    const skeleton = source("src/components/ui/skeleton.tsx");
+    expect(skeleton).toContain("varian-skeleton");
+    expect(skeleton).toContain("motion-safe:animate-pulse");
+    expect(skeleton).toContain("motion-reduce:animate-none");
     expect(panel).toContain('aria-hidden="true"');
 
     expect(source("src/app/loading.tsx")).toContain("<LoadingPanel");
-    expect(source("src/app/(app)/loading.tsx")).toContain("<LoadingPanel");
-    expect(source("src/app/(app)/loading.tsx")).toContain(
-      'title="Loading workspace"',
-    );
+
+    const workspaceLoading = source("src/app/(app)/loading.tsx");
+    expect(workspaceLoading).toContain("<Skeleton");
+    expect(workspaceLoading).toContain('aria-busy="true"');
+    expect(workspaceLoading).toContain("Loading workspace");
   });
 
   it("exposes semantic empty states with text-led meaning", () => {
