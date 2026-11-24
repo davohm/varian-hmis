@@ -84,6 +84,20 @@ export interface RecordTriageVitalsResult {
   suggestedCategory: TriageCategory;
 }
 
+export const callTriagePatientSchema = z.object({
+  facilityId: z.uuid(),
+  idempotencyKey: z.uuid(),
+  actor: actorSchema,
+  queueEntryId: z.uuid(),
+});
+
+export type CallTriagePatientInput = z.input<typeof callTriagePatientSchema>;
+
+export interface CallTriagePatientResult {
+  queueEntryId: string;
+  status: "called";
+}
+
 const ACTIVE_QUEUE_STATUSES: readonly string[] = ["waiting", "called", "in_service"];
 
 export async function recordTriageVitals(
@@ -261,6 +275,107 @@ export async function recordTriageVitals(
         category: values.category,
         suggestedCategory,
       };
+    },
+    options,
+  );
+}
+
+/** Marks a waiting patient as called so the station and the queue agree. */
+export async function callTriagePatient(
+  input: CallTriagePatientInput,
+  options: CommandOptions = {},
+): Promise<CallTriagePatientResult> {
+  const values = callTriagePatientSchema.parse(input);
+  if (!values.actor.userId) {
+    throw new Error("A signed-in user is required to call a patient");
+  }
+  const actorUserId = values.actor.userId;
+
+  return runCommand(
+    { facilityId: values.facilityId, idempotencyKey: values.idempotencyKey },
+    "callTriagePatient",
+    async (tx) => {
+      const rows = await tx
+        .select({
+          id: queueEntries.id,
+          status: queueEntries.status,
+          encounterId: queueEntries.encounterId,
+          encounterNo: encounters.encounterNo,
+          patientId: queueEntries.patientId,
+          mrn: patients.mrn,
+          firstName: patients.firstName,
+          lastName: patients.lastName,
+        })
+        .from(queueEntries)
+        .innerJoin(
+          encounters,
+          and(eq(encounters.id, queueEntries.encounterId), eq(encounters.facilityId, values.facilityId)),
+        )
+        .innerJoin(
+          patients,
+          and(eq(patients.id, queueEntries.patientId), eq(patients.facilityId, values.facilityId)),
+        )
+        .where(
+          and(
+            eq(queueEntries.id, values.queueEntryId),
+            eq(queueEntries.facilityId, values.facilityId),
+            eq(queueEntries.department, "Triage"),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      const entry = rows[0];
+      if (!entry) throw new Error("Triage queue entry not found in this facility");
+      if (entry.status === "done" || entry.status === "cancelled") {
+        throw new Error("This patient is no longer waiting for triage");
+      }
+
+      // A second nurse pressing Call must not create a second audit row.
+      if (entry.status !== "called") {
+        const now = new Date();
+        await tx
+          .update(queueEntries)
+          .set({
+            status: "called",
+            calledAt: now,
+            updatedAt: now,
+            version: sql`${queueEntries.version} + 1`,
+          })
+          .where(
+            and(
+              eq(queueEntries.id, entry.id),
+              eq(queueEntries.facilityId, values.facilityId),
+            ),
+          );
+
+        await recordAudit(tx, {
+          facilityId: values.facilityId,
+          userId: actorUserId,
+          action: "triage.call",
+          module: "triage",
+          entity: "queue_entries",
+          entityId: entry.id,
+          details: {
+            encounterId: entry.encounterId,
+            encounterNo: entry.encounterNo,
+            patientId: entry.patientId,
+            mrn: entry.mrn,
+            patientName: `${entry.firstName} ${entry.lastName}`,
+            fromStatus: entry.status,
+          },
+          deviceId: values.actor.deviceId,
+          ip: values.actor.ip,
+        });
+        await publishEvent(tx, {
+          type: "triage.called",
+          facilityId: values.facilityId,
+          queueEntryId: entry.id,
+          encounterId: entry.encounterId,
+          patientId: entry.patientId,
+        });
+      }
+
+      return { queueEntryId: entry.id, status: "called" as const };
     },
     options,
   );

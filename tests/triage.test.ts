@@ -12,11 +12,13 @@ import { newId, newIdempotencyKey } from "../src/lib/uuid";
 import { startVisit } from "../src/server/commands/encounters";
 import { registerPatient, type RegisterPatientInput } from "../src/server/commands/patients";
 import { queuePatient } from "../src/server/commands/queue";
-import { recordTriageVitals } from "../src/server/commands/triage";
+import { callTriagePatient, recordTriageVitals } from "../src/server/commands/triage";
 import {
   auditLog,
   commandLog,
+  departments,
   queueEntries,
+  rooms,
   triageVitals,
 } from "../src/server/db/schema";
 import { createEventSubscription, type DomainEvent } from "../src/server/events";
@@ -100,6 +102,27 @@ async function queueTriagePatient(
   );
 
   return { ...registered, ...visit, queueEntryId: queued.queueEntryId };
+}
+
+async function insertDoctorRoom(facilityId: string, branchId: string, name = "Consult 1") {
+  const departmentId = newId();
+  await ctx.db.insert(departments).values({
+    id: departmentId,
+    facilityId,
+    branchId,
+    name: "Doctor",
+    kind: "opd",
+    createdBy: "vitest",
+  });
+  const roomId = newId();
+  await ctx.db.insert(rooms).values({
+    id: roomId,
+    facilityId,
+    departmentId,
+    name,
+    createdBy: "vitest",
+  });
+  return roomId;
 }
 
 function triageInput(
@@ -451,5 +474,126 @@ describe("recordTriageVitals", () => {
         recordTriageVitals(triageInput(facility.id, patient), { database: ctx.db }),
       ).rejects.toThrow(/Only open encounters/);
     });
+  });
+
+  it("stores the selected room on the doctor queue entry and rejects rooms from another facility", async () => {
+    const first = await insertTestFacility(ctx.db);
+    const second = await insertTestFacility(ctx.db);
+    const firstBranch = await insertTestBranch(ctx.db, first.id);
+    const secondBranch = await insertTestBranch(ctx.db, second.id);
+
+    try {
+      const roomId = await insertDoctorRoom(first.id, firstBranch);
+      const otherRoomId = await insertDoctorRoom(second.id, secondBranch);
+      const patient = await queueTriagePatient(first, firstBranch);
+
+      const result = await recordTriageVitals(triageInput(first.id, patient, { roomId }), {
+        database: ctx.db,
+      });
+      const doctorEntry = await ctx.db
+        .select()
+        .from(queueEntries)
+        .where(eq(queueEntries.id, result.doctorQueueEntryId));
+      expect(doctorEntry[0]).toMatchObject({ roomId, department: "Doctor" });
+
+      const anotherPatient = await queueTriagePatient(first, firstBranch);
+      await expect(
+        recordTriageVitals(triageInput(first.id, anotherPatient, { roomId: otherRoomId }), {
+          database: ctx.db,
+        }),
+      ).rejects.toThrow(/Room does not belong to the facility/);
+    } finally {
+      await cleanupTestFacility(ctx.db, first.id);
+      await cleanupTestFacility(ctx.db, second.id);
+    }
+  });
+});
+
+describe("callTriagePatient", () => {
+  it("marks a waiting patient as called with an audit row, event and idempotent replay", async () => {
+    await withFacility(async (facility, branchId) => {
+      const patient = await queueTriagePatient(facility, branchId);
+      const input = {
+        facilityId: facility.id,
+        idempotencyKey: newIdempotencyKey(),
+        actor: { userId: "vitest" },
+        queueEntryId: patient.queueEntryId,
+      };
+      const events: DomainEvent[] = [];
+      const subscription = createEventSubscription((event) => events.push(event));
+      await subscription.listen();
+
+      try {
+        const result = await callTriagePatient(input, { database: ctx.db });
+        expect(result).toEqual({ queueEntryId: patient.queueEntryId, status: "called" });
+        expect(await callTriagePatient(input, { database: ctx.db })).toEqual(result);
+
+        const rows = await ctx.db
+          .select()
+          .from(queueEntries)
+          .where(eq(queueEntries.id, patient.queueEntryId));
+        expect(rows[0]).toMatchObject({ status: "called" });
+        expect(rows[0].calledAt).not.toBeNull();
+
+        const audits = await ctx.db
+          .select()
+          .from(auditLog)
+          .where(eq(auditLog.entityId, patient.queueEntryId));
+        expect(audits.filter((row) => row.action === "triage.call")).toHaveLength(1);
+
+        const commands = await ctx.db
+          .select()
+          .from(commandLog)
+          .where(eq(commandLog.idempotencyKey, input.idempotencyKey));
+        expect(commands).toHaveLength(1);
+
+        await waitUntil(() =>
+          events.some(
+            (event) =>
+              event.type === "triage.called" && event.queueEntryId === patient.queueEntryId,
+          ),
+        );
+      } finally {
+        await subscription.close();
+      }
+    });
+  });
+
+  it("does not call a patient who already left triage and rejects another facility", async () => {
+    const first = await insertTestFacility(ctx.db);
+    const second = await insertTestFacility(ctx.db);
+    const firstBranch = await insertTestBranch(ctx.db, first.id);
+
+    try {
+      const patient = await queueTriagePatient(first, firstBranch);
+      await recordTriageVitals(triageInput(first.id, patient), { database: ctx.db });
+      await expect(
+        callTriagePatient(
+          {
+            facilityId: first.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: { userId: "vitest" },
+            queueEntryId: patient.queueEntryId,
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/no longer waiting for triage/);
+
+      const waiting = await queueTriagePatient(first, firstBranch);
+      await expect(
+        callTriagePatient(
+          {
+            facilityId: second.id,
+            idempotencyKey: newIdempotencyKey(),
+            actor: { userId: "vitest" },
+            queueEntryId: waiting.queueEntryId,
+          },
+          { database: ctx.db },
+        ),
+      ).rejects.toThrow(/Triage queue entry not found/);
+    } finally {
+      await cleanupTestFacility(ctx.db, first.id);
+      await cleanupTestFacility(ctx.db, second.id);
+    }
   });
 });
