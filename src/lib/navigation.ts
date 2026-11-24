@@ -132,12 +132,6 @@ export const ROLE_NAV_ITEMS: Record<Role, NavItem[]> = {
       group: "Front desk",
     },
     {
-      label: "Register patient",
-      href: "/reception/register",
-      description: "Create a new medical record and start a visit.",
-      group: "Patients",
-    },
-    {
       label: "Patient registry",
       href: "/reception/patients",
       description: "Search the facility's patient records.",

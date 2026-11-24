@@ -14,7 +14,6 @@ import {
   ShieldPlus,
   ShoppingCart,
   Stethoscope,
-  UserPlus,
   Users,
   Wallet,
   Wrench,
@@ -52,7 +51,6 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
 const ITEM_ICONS: Record<string, LucideIcon> = {
   "/reception": ClipboardList,
   "/reception/queue": Clock3,
-  "/reception/register": UserPlus,
   "/reception/patients": Users,
   "/reports": ClipboardList,
 };

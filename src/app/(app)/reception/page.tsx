@@ -9,13 +9,13 @@ import { db } from "@/server/db/client";
 import { listPatients } from "@/server/queries/patients";
 import { getActiveQueue } from "@/server/queries/queue";
 
-const RECENT_PATIENT_COUNT = 4;
+const RECENT_PATIENT_COUNT = 12;
 
 export default async function ReceptionPage() {
   const staff = await requireScreen(["receptionist"]);
 
-  // Both panels are server-rendered on first paint. The client still refreshes
-  // them live (queue events, search requests) after hydration.
+  // The check-in panel and the combined patient-flow table are server-rendered
+  // on first paint. The client still refreshes them live after hydration.
   const [{ rows: recentPatients }, triageQueue] = await Promise.all([
     listPatients(db, staff.facilityId, "", RECENT_PATIENT_COUNT, 0),
     getActiveQueue(db, staff.facilityId, "Triage"),

@@ -1,45 +1,35 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 
-import { CheckInPanel } from "@/components/reception/check-in-panel";
-import { QueueTable, type QueueEntry } from "@/components/reception/queue-table";
-import { Button } from "@/components/ui/button";
-
-interface RecentPatient {
-  id: string;
-  mrn: string;
-  firstName: string;
-  lastName: string;
-  otherNames: string | null;
-  phone: string | null;
-  dob: string | null;
-  sex: string;
-  createdAt?: string;
-}
+import { CheckInPanel, type SearchResult } from "@/components/reception/check-in-panel";
+import {
+  FrontDeskTable,
+  type FrontDeskPatient,
+} from "@/components/reception/front-desk-table";
+import type { QueueEntry } from "@/components/reception/queue-table";
 
 export function ReceptionWorkspace({
   recentPatients = [],
-  triageQueue,
+  triageQueue = [],
 }: {
-  recentPatients?: RecentPatient[];
+  recentPatients?: FrontDeskPatient[];
   triageQueue?: QueueEntry[];
 }) {
+  const [selectedPatient, setSelectedPatient] = useState<SearchResult | null>(null);
+
   return (
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-      <CheckInPanel recentPatients={recentPatients} />
-      <QueueTable
-        department="Triage"
-        title="Waiting for triage"
-        testId="reception-queue"
-        compact
-        limit={6}
-        initialEntries={triageQueue}
-        action={
-          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/reception/queue" />}>
-            Full queue
-          </Button>
-        }
+    <div className="space-y-6">
+      <CheckInPanel
+        selectedPatient={selectedPatient}
+        onSelectedPatientChange={setSelectedPatient}
+        onCheckedIn={() => setSelectedPatient(null)}
+      />
+      <FrontDeskTable
+        patients={recentPatients}
+        queue={triageQueue}
+        onCheckIn={setSelectedPatient}
+        limit={8}
       />
     </div>
   );

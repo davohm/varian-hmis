@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-interface SearchResult {
+export interface SearchResult {
   id: string;
   mrn: string;
   firstName: string;
@@ -87,17 +87,18 @@ type SearchState = "idle" | "too-short" | "loading" | "ready" | "error";
 
 export function CheckInPanel({
   onCheckedIn,
-  recentPatients = [],
+  selectedPatient,
+  onSelectedPatientChange,
 }: {
   onCheckedIn?: () => void;
-  recentPatients?: SearchResult[];
+  selectedPatient: SearchResult | null;
+  onSelectedPatientChange: (patient: SearchResult | null) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searchedTerm, setSearchedTerm] = useState("");
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [selectedPatient, setSelectedPatient] = useState<SearchResult | null>(null);
   const [checkInPending, setCheckInPending] = useState(false);
   const [keys, setKeys] = useState<Record<string, { visit: string; queue: string }>>({});
 
@@ -203,7 +204,7 @@ export function CheckInPanel({
           priority: "normal",
         });
         toast.success(`${patient.firstName} ${patient.lastName} queued for triage`);
-        setSelectedPatient(null);
+        onSelectedPatientChange(null);
         setSearchTerm("");
         setResults([]);
         setSearchedTerm("");
@@ -216,7 +217,7 @@ export function CheckInPanel({
         setCheckInPending(false);
       }
     },
-    [keys, onCheckedIn],
+    [keys, onCheckedIn, onSelectedPatientChange],
   );
 
   const clearSearch = useCallback(() => {
@@ -226,14 +227,13 @@ export function CheckInPanel({
     setSearchedTerm("");
     setSearchError(null);
     setSearchState("idle");
-    setSelectedPatient(null);
-  }, []);
+    onSelectedPatientChange(null);
+  }, [onSelectedPatientChange]);
 
   const term = searchTerm.trim();
   const showSearchResults = term.length > 0 && !selectedPatient;
   const isSearching = searchState === "loading";
   const hasResults = results.length > 0;
-  const showRecent = !term && !selectedPatient && recentPatients.length > 0;
 
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
@@ -267,7 +267,7 @@ export function CheckInPanel({
             value={searchTerm}
             onChange={(event) => {
               setSearchTerm(event.target.value);
-              if (selectedPatient) setSelectedPatient(null);
+              if (selectedPatient) onSelectedPatientChange(null);
             }}
             autoComplete="off"
             aria-label="Search patients"
@@ -319,7 +319,7 @@ export function CheckInPanel({
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setSelectedPatient(null)}
+                  onClick={() => onSelectedPatientChange(null)}
                   disabled={checkInPending}
                 >
                   Change
@@ -437,7 +437,7 @@ export function CheckInPanel({
                       type="button"
                       data-testid={`patient-result-${patient.id}`}
                       onClick={() => {
-                        setSelectedPatient(patient);
+                        onSelectedPatientChange(patient);
                         setResults([]);
                       }}
                       className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -489,48 +489,7 @@ export function CheckInPanel({
           </div>
         ) : null}
 
-        {showRecent ? (
-          <div className="overflow-hidden rounded-lg border border-border bg-background">
-            <div className="flex items-center justify-between border-b border-border/70 px-3 py-2">
-              <p className="text-xs font-medium text-muted-foreground">Recently registered</p>
-              <Link
-                href="/reception/patients"
-                className="text-xs font-medium text-primary hover:underline"
-              >
-                View registry
-              </Link>
-            </div>
-            <ul className="divide-y divide-border/70">
-              {recentPatients.map((patient) => (
-                <li key={patient.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPatient(patient)}
-                    className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-[11px] font-semibold text-primary">
-                        {initials(patient)}
-                      </span>
-                      <div className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-foreground">
-                          {patient.firstName} {patient.lastName}
-                        </span>
-                        <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
-                          {patient.mrn}
-                          {patient.phone ? ` · ${patient.phone}` : ""}
-                        </span>
-                      </div>
-                    </div>
-                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {!term && !selectedPatient && !showRecent ? (
+        {!term && !selectedPatient ? (
           <div className="rounded-lg border border-dashed border-border bg-muted/15 px-4 py-6">
             <p className="text-sm font-medium text-foreground">Ready for the next patient</p>
             <p className="mt-1 text-sm text-muted-foreground">

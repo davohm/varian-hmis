@@ -433,7 +433,7 @@ export function RegistrationForm() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {lastRegistered ? (
         <div
           data-testid="registration-success"
@@ -466,11 +466,19 @@ export function RegistrationForm() {
       ) : null}
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-        <div className="border-b border-border/80 px-5 py-4 sm:px-6">
-          <h2 className="text-base font-semibold text-foreground">New patient record</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Capture demographics, payer details, and consent. Fields marked * are required.
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border/80 bg-muted/20 px-5 py-4 sm:px-6">
+          <div>
+            <p className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+              Reception · New record
+            </p>
+            <h2 className="mt-1 text-base font-semibold text-foreground">Register a patient</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Three short sections, then a consent confirmation. Only fields marked * are required.
+            </p>
+          </div>
+          <span className="rounded-lg border border-border bg-card px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
+            MRN assigned on save
+          </span>
         </div>
 
         <div className="p-5 sm:p-6">
@@ -522,7 +530,37 @@ export function RegistrationForm() {
             </div>
           ) : null}
 
-          <form onSubmit={onSubmit} noValidate className="space-y-7">
+          <div className="grid gap-8 lg:grid-cols-[190px_minmax(0,1fr)]">
+            <aside className="hidden lg:block" aria-label="Registration progress">
+              <div className="sticky top-6 space-y-5">
+                <p className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+                  Before you save
+                </p>
+                <ol className="space-y-3">
+                  {[
+                    ["01", "Identity", "Name, sex and age"],
+                    ["02", "Contact & payer", "Reach and billing"],
+                    ["03", "Safety & kin", "Allergies and contact"],
+                    ["04", "Consent", "Confirmed on submit"],
+                  ].map(([number, title, detail]) => (
+                    <li key={number} className="flex gap-3">
+                      <span className="grid size-6 shrink-0 place-items-center rounded-lg border border-border bg-card font-mono text-[10px] font-semibold text-primary">
+                        {number}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-foreground">{title}</span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">{detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <p className="rounded-lg border border-dashed border-border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
+                  Nothing is saved until you review and confirm consent.
+                </p>
+              </div>
+            </aside>
+
+            <form onSubmit={onSubmit} noValidate className="min-w-0 space-y-8">
             <div>
               <SectionHeading
                 step="1"
@@ -618,7 +656,7 @@ export function RegistrationForm() {
                     {...register("nationalId")}
                   />
                 </div>
-                <div className="sm:col-span-2">
+                <div>
                   <Label htmlFor="address">Address</Label>
                   <Input id="address" className={FIELD_CLASS} {...register("address")} />
                 </div>
@@ -678,7 +716,7 @@ export function RegistrationForm() {
                     {...register("kinRelationship")}
                   />
                 </div>
-                <div className="sm:col-span-2">
+                <div>
                   <Label htmlFor="kinPhone">Next of kin phone</Label>
                   <Input id="kinPhone" className={FIELD_CLASS} {...register("kinPhone")} />
                 </div>
@@ -715,7 +753,8 @@ export function RegistrationForm() {
                 {pending ? "Registering…" : "Register patient"}
               </Button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       </div>
 
@@ -765,6 +804,7 @@ export function RegistrationForm() {
                 value={consentVersion}
                 onChange={(event) => setConsentVersion(event.target.value)}
                 required
+                style={{}}
               />
             </div>
             <div>
@@ -780,6 +820,7 @@ export function RegistrationForm() {
                 value={consentGrantedBy}
                 onChange={(event) => setConsentGrantedBy(event.target.value)}
                 required
+                style={{}}
               />
             </div>
           </div>
