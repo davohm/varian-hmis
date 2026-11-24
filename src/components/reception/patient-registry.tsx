@@ -223,6 +223,7 @@ export function PatientRegistry({
             aria-label="Filter patient registry"
             maxLength={100}
             autoComplete="off"
+            style={{}}
           />
           {queryInput ? (
             <button

@@ -272,6 +272,7 @@ export function CheckInPanel({
             autoComplete="off"
             aria-label="Search patients"
             aria-describedby="patient-search-hint"
+            style={{}}
           />
           <span className="absolute top-1/2 right-2 -translate-y-1/2">
             {isSearching ? (
